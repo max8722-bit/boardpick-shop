@@ -570,7 +570,7 @@ export default function Home() {
         <section className="detail page-shell">
           <button className="back-link" onClick={() => navigate("shop")}>← 상품 목록</button>
           <div className="detail-layout">
-            <div className="detail-gallery"><ProductArt product={selectedProduct} large />{selectedProduct.badge && <span className="detail-badge">{selectedProduct.badge}</span>}</div>
+            <div className="detail-gallery"><ProductArt product={selectedProduct} large />{selectedProduct.badge && <span className={`detail-badge detail-badge-${selectedProduct.badge === "재입고" ? "restock" : selectedProduct.badge.toLowerCase()}`}>{selectedProduct.badge}</span>}</div>
             <div className="detail-info">
               <span className="eyebrow">{selectedProduct.category} · {selectedProduct.genre}</span>
               <h1>{selectedProduct.name}</h1>
