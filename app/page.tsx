@@ -196,7 +196,7 @@ const products: Product[] = [
     name: "원목 주사위 트레이",
     label: "DICE TRAY",
     category: "액세서리",
-    genre: "플레이 용품",
+    genre: "주사위·트레이",
     price: 19000,
     players: "20×20cm",
     time: "원목",
@@ -242,6 +242,23 @@ const products: Product[] = [
     reviews: 95,
     description: "구성물 크기에 맞춰 자유롭게 조합하는 모듈형 게임 정리함입니다.",
   },
+  {
+    id: 13,
+    name: "오로라 주사위 세트",
+    label: "AURORA DICE",
+    category: "액세서리",
+    genre: "주사위",
+    price: 14800,
+    players: "7개 세트",
+    time: "다각면",
+    level: "레진",
+    received: "08.11 입고",
+    badge: "NEW",
+    art: ["#294c67", "#80c9c0", "#dcc9f2"],
+    rating: 4.9,
+    reviews: 42,
+    description: "빛에 따라 색이 은은하게 달라지는 일곱 개 구성의 다각면 레진 주사위 세트입니다.",
+  },
 ];
 
 const formatWon = (value: number) => `${value.toLocaleString("ko-KR")}원`;
@@ -281,6 +298,7 @@ export default function Home() {
   const [sort, setSort] = useState("추천순");
   const [detailQuantity, setDetailQuantity] = useState(1);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [boardMenuOpen, setBoardMenuOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [orderNumber, setOrderNumber] = useState("");
   const [form, setForm] = useState({ name: "", phone: "", email: "", receiver: "", receiverPhone: "", postcode: "", address: "", detailAddress: "", request: "" });
@@ -311,6 +329,7 @@ export default function Home() {
   const navigate = (next: View) => {
     setView(next);
     setMenuOpen(false);
+    setBoardMenuOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -426,14 +445,22 @@ export default function Home() {
           </div>
         </div>
         <nav className={`main-nav ${menuOpen ? "open" : ""}`} aria-label="주요 메뉴">
-          <div className="page-shell">
-            <button onClick={() => { setCategory("보드게임"); navigate("shop"); }}>보드게임</button>
-            <button onClick={() => { setCategory("액세서리"); navigate("shop"); }}>액세서리</button>
-            <button onClick={() => { setCategory("가족"); navigate("shop"); }}>테마 추천</button>
-            <button className={view === "new" ? "active" : ""} onClick={() => { setCategory("전체"); navigate("new"); }}>신상품</button>
-            <button className={view === "featured" ? "active" : ""} onClick={() => { setCategory("전체"); navigate("featured"); }}>보드픽 추천</button>
-            <button onClick={() => { setSort("평점순"); setCategory("전체"); navigate("shop"); }}>베스트</button>
+          <div className="primary-nav page-shell">
+            <button className={`board-menu-trigger ${boardMenuOpen ? "active" : ""}`} onClick={() => setBoardMenuOpen(!boardMenuOpen)} aria-expanded={boardMenuOpen} aria-controls="board-game-submenu">보드게임 <span aria-hidden="true">⌄</span></button>
+            <button onClick={() => { setSearch(""); setCategory("주사위"); navigate("shop"); }}>주사위</button>
+            <button onClick={() => { setSearch(""); setCategory("액세서리"); navigate("shop"); }}>액세서리</button>
           </div>
+          {boardMenuOpen && (
+            <div className="board-subnav" id="board-game-submenu">
+              <div className="page-shell">
+                <span className="subnav-label">보드게임 둘러보기</span>
+                <button onClick={() => { setSearch(""); setCategory("보드게임"); navigate("new"); }}>신상품 <span aria-hidden="true">→</span></button>
+                <button onClick={() => { setSearch(""); setCategory("가족"); navigate("shop"); }}>테마 추천 <span aria-hidden="true">→</span></button>
+                <button onClick={() => { setSearch(""); setCategory("보드게임"); navigate("featured"); }}>보드픽 추천 <span aria-hidden="true">→</span></button>
+                <button onClick={() => { setSearch(""); setSort("평점순"); setCategory("보드게임"); navigate("shop"); }}>베스트 <span aria-hidden="true">→</span></button>
+              </div>
+            </div>
+          )}
         </nav>
       </header>
 
@@ -519,8 +546,8 @@ export default function Home() {
         <section className="collection page-shell">
           <div className="collection-heading">
             <span className="eyebrow">{view === "new" ? "JUST ARRIVED" : view === "featured" ? "EDITOR'S PICK" : "ALL PRODUCTS"}</span>
-            <h1>{view === "new" ? "새로 들어온 보드게임" : view === "featured" ? "보드픽이 추천해요" : "취향에 맞는 게임 찾기"}</h1>
-            <p>{view === "new" ? "실제 입고일이 가장 최근인 상품부터 보여드려요." : view === "featured" ? "직접 플레이하고 자신 있게 추천하는 이번 시즌의 선택입니다." : "인원, 시간, 난이도를 기준으로 편하게 골라보세요."}</p>
+            <h1>{view === "new" ? "새로 들어온 보드게임" : view === "featured" ? "보드픽이 추천해요" : category === "주사위" ? "플레이를 완성하는 주사위" : "취향에 맞는 게임 찾기"}</h1>
+            <p>{view === "new" ? "실제 입고일이 가장 최근인 상품부터 보여드려요." : view === "featured" ? "직접 플레이하고 자신 있게 추천하는 이번 시즌의 선택입니다." : category === "주사위" ? "클래식 주사위부터 다각면 세트와 트레이까지 한곳에서 만나보세요." : "인원, 시간, 난이도를 기준으로 편하게 골라보세요."}</p>
           </div>
           {view === "featured" && (
             <div className="collection-featured">
@@ -530,7 +557,7 @@ export default function Home() {
           )}
           <div className="filter-bar">
             <div className="filter-chips">
-              {["전체", "보드게임", "액세서리", "가족", "전략", "파티", "2인"].map((item) => <button key={item} className={category === item ? "active" : ""} onClick={() => setCategory(item)}>{item}</button>)}
+              {["전체", "보드게임", "주사위", "액세서리", "가족", "전략", "파티", "2인"].map((item) => <button key={item} className={category === item ? "active" : ""} onClick={() => setCategory(item)}>{item}</button>)}
             </div>
             <label>정렬 <select value={sort} onChange={(e) => setSort(e.target.value)}><option>추천순</option><option>평점순</option><option>낮은 가격순</option><option>높은 가격순</option></select></label>
           </div>
