@@ -842,7 +842,7 @@ function ProductArt({ product, large = false }: { product: Product; large?: bool
 }
 
 function FavoriteIcon({ className = "" }: { className?: string }) {
-  return <span className={`favorite-icon ${className}`.trim()} aria-hidden="true">{"\u2764\uFE0E"}</span>;
+  return <span className={`favorite-icon ${className}`.trim()} aria-hidden="true" />;
 }
 
 function EmptyIcon({ type }: { type: "heart" | "bag" | "search" | "user" }) {
