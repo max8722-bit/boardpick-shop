@@ -34,6 +34,7 @@ type Product = {
 };
 
 type CartItem = { product: Product; quantity: number; selected: boolean };
+type ChatMessage = { role: "user" | "assistant"; content: string };
 
 type DaumPostcodeData = {
   zonecode: string;
@@ -890,6 +891,12 @@ export default function Home() {
   const [adminLoginOpen, setAdminLoginOpen] = useState(false);
   const [adminCredentials, setAdminCredentials] = useState({ id: "admin", password: "boardpick" });
   const [adminLoginError, setAdminLoginError] = useState("");
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatError, setChatError] = useState("");
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{ role: "assistant", content: "안녕하세요! 보드픽 AI 도우미예요. 인원, 플레이 시간, 원하는 분위기를 알려주시면 게임을 골라드릴게요." }]);
+  const chatEndRef = useRef<HTMLDivElement>(null);
   const completeNaverPayOrder = (approvedOrderNumber: string) => {
     setPayment("네이버페이");
     setOrderNumber(approvedOrderNumber);
@@ -912,6 +919,36 @@ export default function Home() {
       window.localStorage.removeItem("boardpick-admin-products");
     }
   }, []);
+
+  useEffect(() => {
+    if (chatOpen) chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [chatOpen, chatMessages, chatLoading]);
+
+  const sendChatMessage = async (event?: FormEvent, suggestedQuestion?: string) => {
+    event?.preventDefault();
+    const content = (suggestedQuestion ?? chatInput).trim();
+    if (!content || chatLoading) return;
+    const nextMessages = [...chatMessages, { role: "user" as const, content }];
+    setChatMessages(nextMessages);
+    setChatInput("");
+    setChatError("");
+    setChatLoading(true);
+    try {
+      const endpoint = import.meta.env.VITE_CHAT_API_URL || `${window.location.origin}${window.location.pathname.replace(/\/?$/, "/")}api/chat`;
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: nextMessages.slice(-8) }),
+      });
+      const result = await response.json() as { answer?: string; message?: string };
+      if (!response.ok || !result.answer) throw new Error(result.message || "답변을 불러오지 못했습니다.");
+      setChatMessages((current) => [...current, { role: "assistant", content: result.answer as string }]);
+    } catch (error) {
+      setChatError(error instanceof Error ? error.message : "AI 상담에 연결하지 못했습니다.");
+    } finally {
+      setChatLoading(false);
+    }
+  };
 
   useEffect(() => {
     fetch(`${window.location.origin}${window.location.pathname.replace(/\/?$/, "/")}api/naverpay/config`).then((response) => response.json()).then((config) => setNaverPayConfig(config)).catch(() => setNaverPayConfig(localNaverPayConfig()));
@@ -1786,6 +1823,33 @@ export default function Home() {
         <button onClick={() => showToast(liked.length ? `찜한 상품이 ${liked.length}개 있어요.` : "아직 찜한 상품이 없어요.")}><FavoriteIcon className="mobile-nav-icon" /><small>찜</small>{liked.length > 0 && <b className="mobile-nav-count">{liked.length}</b>}</button>
         <button className={(view === "cart" || view === "checkout" || view === "complete") ? "active" : ""} aria-current={view === "cart" ? "page" : undefined} onClick={() => navigateFromTop("cart")}><EmptyIcon type="bag" /><small>장바구니</small>{cartCount > 0 && <b className="mobile-nav-count">{cartCount}</b>}</button>
       </nav>
+
+      <aside className={`ai-chat ${chatOpen ? "open" : ""}`} aria-label="보드픽 AI 상담">
+        {chatOpen && (
+          <section className="ai-chat-panel" id="ai-chat-panel" role="dialog" aria-modal="false" aria-labelledby="ai-chat-title">
+            <header>
+              <div><span className="ai-chat-mark" aria-hidden="true">AI</span><span><strong id="ai-chat-title">보드픽 AI 도우미</strong><small>게임 선택부터 배송까지 물어보세요</small></span></div>
+              <button type="button" onClick={() => setChatOpen(false)} aria-label="AI 상담 닫기">×</button>
+            </header>
+            <div className="ai-chat-messages" aria-live="polite">
+              {chatMessages.map((message, index) => <div className={`ai-chat-message ${message.role}`} key={`${message.role}-${index}`}><span>{message.role === "assistant" ? "AI" : "나"}</span><p>{message.content}</p></div>)}
+              {chatLoading && <div className="ai-chat-message assistant"><span>AI</span><p className="ai-chat-typing"><i /><i /><i /><b className="sr-only">답변 작성 중</b></p></div>}
+              {chatError && <div className="ai-chat-error" role="alert"><span>{chatError}</span><button type="button" onClick={() => sendChatMessage(undefined, chatMessages.filter((message) => message.role === "user").at(-1)?.content)}>다시 시도</button></div>}
+              <div ref={chatEndRef} />
+            </div>
+            {chatMessages.length === 1 && <div className="ai-chat-suggestions">{["2명이 30분 안에 할 게임", "가족 게임 추천", "배송은 얼마나 걸려요?"].map((question) => <button type="button" key={question} onClick={() => sendChatMessage(undefined, question)}>{question}</button>)}</div>}
+            <form className="ai-chat-form" onSubmit={(event) => sendChatMessage(event)}>
+              <label className="sr-only" htmlFor="ai-chat-input">AI 도우미에게 질문</label>
+              <textarea id="ai-chat-input" rows={1} maxLength={700} value={chatInput} onChange={(event) => setChatInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendChatMessage(); } }} placeholder="어떤 게임을 찾으세요?" />
+              <button type="submit" disabled={!chatInput.trim() || chatLoading} aria-label="질문 보내기">↑</button>
+            </form>
+            <small className="ai-chat-disclaimer">AI 답변은 참고용이며 가격·재고는 상품 페이지를 확인해 주세요.</small>
+          </section>
+        )}
+        <button className="ai-chat-launcher" type="button" onClick={() => setChatOpen((open) => !open)} aria-expanded={chatOpen} aria-controls="ai-chat-panel">
+          <span aria-hidden="true">{chatOpen ? "×" : "AI"}</span><b>{chatOpen ? "상담 닫기" : "AI 게임 추천"}</b>
+        </button>
+      </aside>
 
       <footer className="footer">
         <div className="page-shell footer-grid"><div><button className="brand footer-brand" onClick={() => navigate("home")} aria-label="보드픽 홈"><img className="brand-logo" src={siteAsset("/brand/boardpick-logo.png")} alt="보드픽 BOARD PICK" /></button><p>오늘의 즐거움을 고르는 가장 쉬운 방법.<br />좋은 게임과 필요한 도구를 한곳에서 만나보세요.</p></div><div><strong>쇼핑</strong><button onClick={() => navigate("new")}>신상품</button><button onClick={() => navigate("featured")}>보드픽 추천</button><button onClick={() => navigate("shop")}>전체 상품</button></div><div><strong>고객 안내</strong><button onClick={() => openSupport("delivery")}>배송 안내</button><button onClick={() => openSupport("returns")}>교환·반품</button><button onClick={() => openSupport("faq")}>자주 묻는 질문</button></div><div><strong>고객센터</strong><b>02-1234-5678</b><small>평일 10:00–17:00<br />점심 12:00–13:00</small></div></div><div className="page-shell footer-bottom"><span>© 2026 BOARDPICK. All rights reserved.</span><span>이용약관 · 개인정보처리방침</span><button className="admin-access-link" onClick={openAdminAccess}>{adminAuthenticated ? "관리자 공간" : "관리자 로그인"}</button></div>
