@@ -22,5 +22,7 @@ test("server-renders the Boardpick shop", async () => {
   assert.match(html, /보드픽/);
   assert.match(html, /오늘의 즐거움을 골라보세요/);
   assert.match(html, /테이블 위에 펼쳐지는/);
+  assert.match(html, /관리자 로그인/);
+  assert.doesNotMatch(html, /관리자 상품 등록/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/i);
 });
