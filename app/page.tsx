@@ -151,10 +151,9 @@ const transparentProductAsset = (path: string) => {
 };
 
 const localNaverPayConfig = () => {
-  const env = (import.meta as unknown as { env?: { NEXT_PUBLIC_NAVER_PAY_CLIENT_ID?: string; NEXT_PUBLIC_NAVER_PAY_CHAIN_ID?: string; NAVER_PAY_MODE?: string } }).env;
-  const clientId = env?.NEXT_PUBLIC_NAVER_PAY_CLIENT_ID;
-  const chainId = env?.NEXT_PUBLIC_NAVER_PAY_CHAIN_ID;
-  return { configured: Boolean(clientId && chainId), clientId, chainId, mode: env?.NAVER_PAY_MODE === "production" ? "production" as const : "development" as const };
+  const clientId = import.meta.env.NEXT_PUBLIC_NAVER_PAY_CLIENT_ID;
+  const chainId = import.meta.env.NEXT_PUBLIC_NAVER_PAY_CHAIN_ID;
+  return { configured: Boolean(clientId && chainId), clientId, chainId, mode: import.meta.env.NAVER_PAY_MODE === "production" ? "production" as const : "development" as const };
 };
 
 function CutoutImage({ src, alt = "", className = "" }: { src: string; alt?: string; className?: string }) {
