@@ -842,7 +842,7 @@ function ProductArt({ product, large = false }: { product: Product; large?: bool
 }
 
 function FavoriteIcon({ className = "" }: { className?: string }) {
-  return <span className={`favorite-icon ${className}`.trim()} aria-hidden="true">♥</span>;
+  return <span className={`favorite-icon ${className}`.trim()} aria-hidden="true">{"\u2764\uFE0E"}</span>;
 }
 
 function EmptyIcon({ type }: { type: "heart" | "bag" | "search" | "user" }) {
@@ -1570,7 +1570,7 @@ export default function Home() {
                 <p>{products[0].description}</p>
                 <div className="info-pills"><span>{products[0].players}</span><span>{products[0].time}</span><span>난이도 {products[0].level}</span></div>
                 <div className="featured-price"><strong>{formatWon(products[0].price)}</strong><del>{formatWon(products[0].originalPrice || 0)}</del></div>
-                <div className="featured-actions"><button className="button-primary" onClick={() => openProduct(products[0])}>상품 자세히 보기</button><button className={`round-heart ${liked.includes(products[0].id) ? "active" : ""}`} onClick={() => toggleLike(products[0].id)} aria-label="달빛 정원 찜하기">♥</button></div>
+                <div className="featured-actions"><button className="button-primary" onClick={() => openProduct(products[0])}>상품 자세히 보기</button><button className={`round-heart ${liked.includes(products[0].id) ? "active" : ""}`} onClick={() => toggleLike(products[0].id)} aria-label="달빛 정원 찜하기"><FavoriteIcon /></button></div>
               </div>
             </div>
           </section>
@@ -1732,7 +1732,7 @@ export default function Home() {
               <div className="detail-specs"><div><small>인원 / 규격</small><strong>{selectedProduct.players}</strong></div><div><small>시간 / 구성</small><strong>{selectedProduct.time}</strong></div><div><small>난이도 / 특징</small><strong>{selectedProduct.level}</strong></div></div>
               <div className="delivery-info"><span>배송</span><p><strong>3,000원</strong><small>50,000원 이상 무료 · 오늘 주문 시 내일 출발</small></p></div>
               <div className="quantity-line"><span>수량</span><div className="quantity-stepper"><button onClick={() => setDetailQuantity(Math.max(1, detailQuantity - 1))} aria-label="수량 줄이기">−</button><b>{detailQuantity}</b><button onClick={() => setDetailQuantity(detailQuantity + 1)} aria-label="수량 늘리기">＋</button></div><strong>{formatWon(selectedProduct.price * detailQuantity)}</strong></div>
-              <div className="detail-actions"><button className={`round-heart ${liked.includes(selectedProduct.id) ? "active" : ""}`} onClick={() => toggleLike(selectedProduct.id)} aria-label="찜하기">♥</button><button className="button-secondary" onClick={() => addToCart(selectedProduct, detailQuantity)}>장바구니 담기</button><button className="button-primary" onClick={() => buyNow(selectedProduct, detailQuantity)}>바로 구매</button></div>
+              <div className="detail-actions"><button className={`round-heart ${liked.includes(selectedProduct.id) ? "active" : ""}`} onClick={() => toggleLike(selectedProduct.id)} aria-label="찜하기"><FavoriteIcon /></button><button className="button-secondary" onClick={() => addToCart(selectedProduct, detailQuantity)}>장바구니 담기</button><button className="button-primary" onClick={() => buyNow(selectedProduct, detailQuantity)}>바로 구매</button></div>
             </div>
           </div>
           <div className="detail-tabs"><button className="active" onClick={() => scrollToDetail("product-story")}>상품 소개</button><button onClick={() => scrollToDetail("product-guide")}>게임 정보</button><button onClick={() => scrollToDetail("shipping-guide")}>배송·교환</button><button onClick={() => scrollToDetail("review-summary")}>리뷰 {selectedProduct.reviews}</button></div>
