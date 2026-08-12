@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type SupportView = "delivery" | "returns" | "faq";
 type View = "home" | "shop" | "new" | "featured" | "detail" | "cart" | "checkout" | "complete" | "admin" | SupportView;
@@ -20,7 +20,8 @@ type Product = {
   time: string;
   level: string;
   received: string;
-  badge?: "NEW" | "재입고" | "BEST";
+  badge?: "NEW" | "재입고" | "BEST" | "TEST";
+  paymentTest?: boolean;
   featured?: boolean;
   featureCopy?: string;
   art: [string, string, string];
@@ -34,11 +35,215 @@ type Product = {
 
 type CartItem = { product: Product; quantity: number; selected: boolean };
 
+type DaumPostcodeData = {
+  zonecode: string;
+  address: string;
+  roadAddress: string;
+  jibunAddress: string;
+  addressType: "R" | "J";
+  bname: string;
+  buildingName: string;
+};
+
+type DaumPostcodeInstance = {
+  embed: (element: HTMLElement, options?: { autoClose?: boolean }) => void;
+};
+
+declare global {
+  interface Window {
+    Naver?: {
+      Pay: {
+        create: (options: {
+          mode: "development" | "production";
+          payType: "normal";
+          openType?: "page" | "popup";
+          clientId: string;
+          chainId: string;
+        }) => {
+          open: (options: Record<string, unknown>) => void;
+        };
+      };
+    };
+    daum?: {
+      Postcode: new (options: {
+        width?: string;
+        height?: string;
+        oncomplete: (data: DaumPostcodeData) => void;
+        onclose?: () => void;
+      }) => DaumPostcodeInstance;
+    };
+  }
+}
+
+const DAUM_POSTCODE_SCRIPT_ID = "daum-postcode-script";
+const DAUM_POSTCODE_SCRIPT_URL = "https://t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js";
+let daumPostcodePromise: Promise<void> | null = null;
+const NAVER_PAY_SCRIPT_ID = "naver-pay-sdk";
+const NAVER_PAY_SCRIPT_URL = "https://nsp.pay.naver.com/sdk/js/naverpay.min.js";
+let naverPayPromise: Promise<void> | null = null;
+
+const loadNaverPay = () => {
+  if (window.Naver?.Pay) return Promise.resolve();
+  if (naverPayPromise) return naverPayPromise;
+  naverPayPromise = new Promise<void>((resolve, reject) => {
+    const handleLoad = () => window.Naver?.Pay ? resolve() : reject(new Error("네이버페이 SDK를 초기화하지 못했습니다."));
+    const handleError = () => reject(new Error("네이버페이 SDK를 불러오지 못했습니다."));
+    const existing = document.getElementById(NAVER_PAY_SCRIPT_ID) as HTMLScriptElement | null;
+    if (existing) {
+      existing.addEventListener("load", handleLoad, { once: true });
+      existing.addEventListener("error", handleError, { once: true });
+      return;
+    }
+    const script = document.createElement("script");
+    script.id = NAVER_PAY_SCRIPT_ID;
+    script.src = NAVER_PAY_SCRIPT_URL;
+    script.async = true;
+    script.addEventListener("load", handleLoad, { once: true });
+    script.addEventListener("error", handleError, { once: true });
+    document.head.appendChild(script);
+  }).catch((error) => {
+    naverPayPromise = null;
+    throw error;
+  });
+  return naverPayPromise;
+};
+
+const loadDaumPostcode = () => {
+  if (window.daum?.Postcode) return Promise.resolve();
+  if (daumPostcodePromise) return daumPostcodePromise;
+
+  daumPostcodePromise = new Promise<void>((resolve, reject) => {
+    const handleLoad = () => window.daum?.Postcode ? resolve() : reject(new Error("다음 우편번호 서비스를 초기화하지 못했습니다."));
+    const handleError = () => reject(new Error("다음 우편번호 서비스를 불러오지 못했습니다."));
+    const existing = document.getElementById(DAUM_POSTCODE_SCRIPT_ID) as HTMLScriptElement | null;
+
+    if (existing) {
+      existing.addEventListener("load", handleLoad, { once: true });
+      existing.addEventListener("error", handleError, { once: true });
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.id = DAUM_POSTCODE_SCRIPT_ID;
+    script.src = DAUM_POSTCODE_SCRIPT_URL;
+    script.async = true;
+    script.addEventListener("load", handleLoad, { once: true });
+    script.addEventListener("error", handleError, { once: true });
+    document.head.appendChild(script);
+  }).catch((error) => {
+    daumPostcodePromise = null;
+    throw error;
+  });
+
+  return daumPostcodePromise;
+};
+
 const siteAsset = (path: string) => {
   if (/^(?:data:|https?:\/\/)/.test(path)) return path;
   const base = (import.meta as unknown as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? "/";
   return `${base.replace(/\/$/, "")}/${path.replace(/^\//, "")}`;
 };
+
+const transparentProductAsset = (path: string) => {
+  if (/^(?:data:|https?:\/\/)/.test(path)) return path;
+  const normalized = path.replace(/^\//, "");
+  return normalized.startsWith("product-art/") ? siteAsset(`/product-art-transparent/${normalized.slice("product-art/".length)}`) : siteAsset(path);
+};
+
+const localNaverPayConfig = () => {
+  const env = (import.meta as unknown as { env?: { NEXT_PUBLIC_NAVER_PAY_CLIENT_ID?: string; NEXT_PUBLIC_NAVER_PAY_CHAIN_ID?: string; NAVER_PAY_MODE?: string } }).env;
+  const clientId = env?.NEXT_PUBLIC_NAVER_PAY_CLIENT_ID;
+  const chainId = env?.NEXT_PUBLIC_NAVER_PAY_CHAIN_ID;
+  return { configured: Boolean(clientId && chainId), clientId, chainId, mode: env?.NAVER_PAY_MODE === "production" ? "production" as const : "development" as const };
+};
+
+function CutoutImage({ src, alt = "", className = "" }: { src: string; alt?: string; className?: string }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [ready, setReady] = useState(false);
+  const resolvedSrc = transparentProductAsset(src);
+
+  useEffect(() => {
+    if (resolvedSrc.includes("/product-art-transparent/")) {
+      setReady(false);
+      return;
+    }
+    let cancelled = false;
+    const image = new Image();
+    image.decoding = "async";
+    if (/^https?:\/\//.test(resolvedSrc)) image.crossOrigin = "anonymous";
+    image.onload = () => {
+      if (cancelled || !canvasRef.current) return;
+      const canvas = canvasRef.current;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      if (!context) return;
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      context.drawImage(image, 0, 0);
+
+      try {
+        const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+        const { data, width, height } = imageData;
+        const total = width * height;
+        const visited = new Uint8Array(total);
+        const queue = new Int32Array(total);
+        let head = 0;
+        let tail = 0;
+
+        const isBackground = (pixel: number) => {
+          const offset = pixel * 4;
+          const red = data[offset];
+          const green = data[offset + 1];
+          const blue = data[offset + 2];
+          const lightest = Math.max(red, green, blue);
+          const darkest = Math.min(red, green, blue);
+          return darkest >= 194 && lightest - darkest <= 30;
+        };
+        const enqueue = (pixel: number) => {
+          if (pixel < 0 || pixel >= total || visited[pixel] || !isBackground(pixel)) return;
+          visited[pixel] = 1;
+          queue[tail++] = pixel;
+        };
+
+        for (let x = 0; x < width; x += 1) {
+          enqueue(x);
+          enqueue((height - 1) * width + x);
+        }
+        for (let y = 1; y < height - 1; y += 1) {
+          enqueue(y * width);
+          enqueue(y * width + width - 1);
+        }
+
+        while (head < tail) {
+          const pixel = queue[head++];
+          const x = pixel % width;
+          const offset = pixel * 4;
+          const darkest = Math.min(data[offset], data[offset + 1], data[offset + 2]);
+          const matteAlpha = darkest >= 248 ? 0 : Math.round(((248 - darkest) / 54) * 255);
+          data[offset + 3] = Math.min(data[offset + 3], Math.max(0, Math.min(255, matteAlpha)));
+          if (x > 0) enqueue(pixel - 1);
+          if (x < width - 1) enqueue(pixel + 1);
+          if (pixel >= width) enqueue(pixel - width);
+          if (pixel < total - width) enqueue(pixel + width);
+        }
+
+        context.putImageData(imageData, 0, 0);
+        setReady(true);
+      } catch {
+        setReady(false);
+      }
+    };
+    image.onerror = () => setReady(false);
+    image.src = resolvedSrc;
+    return () => { cancelled = true; };
+  }, [resolvedSrc]);
+
+  return (
+    <span className={`cutout-image ${className}`.trim()} role={alt ? "img" : undefined} aria-label={alt || undefined}>
+      <img className="cutout-fallback" src={resolvedSrc} alt={alt} />
+      {!resolvedSrc.includes("/product-art-transparent/") && <canvas ref={canvasRef} className={ready ? "cutout-canvas is-ready" : "cutout-canvas"} aria-hidden="true" />}
+    </span>
+  );
+}
 
 const products: Product[] = [
   {
@@ -393,6 +598,27 @@ const products: Product[] = [
     reviews: 36,
     description: "서로 다른 능력을 가진 영웅을 이끌고 장비와 마법을 모아 용이 지키는 성을 공략하는 판타지 전략 보드게임입니다.",
   },
+  {
+    id: 19,
+    name: "결제 테스트 상품",
+    label: "PAYMENT TEST",
+    image: "/brand/boardpick-logo.png",
+    imageMode: "photo",
+    category: "액세서리",
+    genre: "결제 테스트 전용",
+    price: 1000,
+    players: "1개",
+    time: "즉시 확인",
+    level: "무료배송",
+    received: "08.12 등록",
+    badge: "TEST",
+    paymentTest: true,
+    art: ["#002038", "#1068b8", "#ffb808"],
+    rating: 0,
+    reviews: 0,
+    description: "네이버페이 개발환경과 주문·결제 화면을 확인하기 위한 1,000원 테스트 전용 상품입니다. 실제 배송은 진행되지 않습니다.",
+    stock: 999,
+  },
 ];
 
 const formatWon = (value: number) => `${value.toLocaleString("ko-KR")}원`;
@@ -425,7 +651,7 @@ const numericRange = (value: string) => value.match(/\d+/g)?.map(Number) ?? [];
 
 const productFacts = (product: Product) => {
   if (product.category === "보드게임") {
-    return [product.players, product.time, `난도 ${product.level}`, product.age || (product.id === 6 || product.id === 18 ? "12세+" : "8세+"), product.language || "한글판"];
+    return [product.players, product.time, `난이도 ${product.level}`, product.age || (product.id === 6 || product.id === 18 ? "12세+" : "8세+"), product.language || "한글판"];
   }
   if (product.category === "주사위") {
     return [product.time, product.players, product.level, product.time === "D6" ? "16mm" : "정밀 각인"];
@@ -563,9 +789,10 @@ const productDetailCopy: Record<number, {
   16: { title: "손안에 담긴 작은 은하수", intro: "짙은 남색 투명 레진 안에 보라색과 은빛 입자를 층층이 담았습니다. 금색 숫자가 선명하게 대비되어 분위기와 실용성을 함께 갖췄습니다.", highlights: ["깊이감 있는 갤럭시 플레이크", "어두운 곳에서도 읽기 쉬운 금색 숫자", "TRPG에 필요한 7종 완전 구성"], guide: ["빛 아래에서 표면과 숫자를 확인합니다.", "트레이 중앙을 향해 충분히 굴립니다.", "부드러운 파우치로 마찰과 흠집을 줄입니다."], recommended: ["판타지 TRPG", "레진 주사위", "주사위 수집"], contents: "갤럭시 레진 D4, D6, D8, D10, D%, D12, D20 각 1개 · 벨벳 파우치" },
   17: { title: "나뭇결마다 다른 따뜻한 주사위", intro: "월넛·메이플·체리 원목을 손으로 다듬어 모든 주사위의 결이 조금씩 다릅니다. 가볍고 부드러운 굴림이 목재 게임 구성품과 자연스럽게 어울립니다.", highlights: ["서로 다른 세 가지 천연 나뭇결", "손으로 다듬은 부드러운 모서리", "소음이 적은 가벼운 굴림"], guide: ["원목 종류와 표면 상태를 확인합니다.", "마른 테이블이나 펠트 트레이에서 굴립니다.", "물기를 피하고 마른 천으로 관리합니다."], recommended: ["원목 보드게임", "내추럴 소품", "조용한 플레이"], contents: "천연 원목 D6 주사위 6개: 월넛 2개, 메이플 2개, 체리 2개 · 면 파우치" },
   18: { title: "용이 잠든 성을 되찾아라", intro: "기사·궁수·마법사·전사로 원정대를 꾸리고, 성으로 이어지는 길에서 장비와 마법을 모으세요. 다른 플레이어보다 먼저 성의 방어선을 돌파하고 용의 보물을 차지해야 합니다.", highlights: ["서로 다른 능력을 가진 네 영웅", "탐험과 장비 조합이 만드는 성장 전략", "매번 달라지는 성과 용의 방어 패턴"], guide: ["영웅 하나를 선택하고 시작 장비를 준비합니다.", "지역을 탐험해 장비·마법·동료 카드를 모읍니다.", "성의 수호자를 물리치고 용의 방에 먼저 도달합니다."], recommended: ["판타지 테마", "중급 전략", "2–4인 플레이"], contents: "게임 보드 1개, 영웅 미니어처 4개, 용 미니어처 1개, 지역 타일 48개, 장비·마법 카드 120장, 전투 주사위 8개, 토큰 96개, 규칙서" },
+  19: { title: "1,000원으로 결제 흐름을 확인하세요", intro: "네이버페이 개발환경의 결제창 호출과 주문 완료 흐름을 안전하게 점검하기 위한 테스트 전용 상품입니다. 배송비가 붙지 않아 최종 결제 금액도 1,000원으로 유지됩니다.", highlights: ["최종 결제 금액 1,000원", "테스트 전용 무료배송", "실물 배송이 없는 결제 확인용 상품"], guide: ["바로 구매 버튼을 눌러 주문·결제 화면으로 이동합니다.", "배송지와 필수 정보를 입력하고 네이버페이를 선택합니다.", "1,000원 테스트 결제 버튼을 눌러 개발환경 결제창을 확인합니다."], recommended: ["네이버페이 테스트", "주문 흐름 점검", "무료배송"], contents: "결제 기능 확인용 가상 상품 1개 · 실제 배송 없음" },
 };
 
-function ProductArt({ product, large = false, cutout = false }: { product: Product; large?: boolean; cutout?: boolean }) {
+function ProductArt({ product, large = false }: { product: Product; large?: boolean; cutout?: boolean }) {
   const style = {
     "--art-one": product.art[0],
     "--art-two": product.art[1],
@@ -574,19 +801,19 @@ function ProductArt({ product, large = false, cutout = false }: { product: Produ
 
   if (product.category !== "보드게임" || product.imageMode === "photo") {
     return (
-      <div className={`product-art product-photo-art ${large ? "product-art-large" : ""} ${cutout ? "product-art-cutout" : ""}`.trim()} role="img" aria-label={`${product.name} 상품 이미지`}>
-        <div className="product-photo-surface"><img className="product-photo" src={siteAsset(product.image)} alt="" aria-hidden="true" /></div>
+      <div className={`product-art product-photo-art product-art-cutout ${large ? "product-art-large" : ""}`.trim()} role="img" aria-label={`${product.name} 상품 이미지`}>
+        <div className="product-photo-surface"><CutoutImage className="product-photo" src={product.image} /></div>
       </div>
     );
   }
 
   return (
-    <div className={`product-art ${large ? "product-art-large" : ""} ${cutout ? "product-art-cutout" : ""}`.trim()} style={style} role="img" aria-label={`${product.name} 보드게임 케이스 이미지`}>
+    <div className={`product-art product-art-cutout ${large ? "product-art-large" : ""}`.trim()} style={style} role="img" aria-label={`${product.name} 보드게임 케이스 이미지`}>
       <div className="case-shadow" />
       <div className="case-spine" aria-hidden="true"><span>{product.label}</span></div>
       <div className="case-top" aria-hidden="true" />
       <div className="case-front">
-        <img className="case-cover" src={siteAsset(product.image)} alt="" aria-hidden="true" />
+        <CutoutImage className="case-cover" src={product.image} />
         <div className="case-print-texture" />
         <span className="art-label">BOARDPICK GAMES</span>
         <div className="case-title">
@@ -605,7 +832,7 @@ function FavoriteIcon({ className = "" }: { className?: string }) {
   return <span className={`favorite-icon ${className}`.trim()} aria-hidden="true">♥</span>;
 }
 
-function EmptyIcon({ type }: { type: "heart" | "bag" | "search" }) {
+function EmptyIcon({ type }: { type: "heart" | "bag" | "search" | "user" }) {
   if (type === "heart") return <FavoriteIcon className="header-icon header-icon-heart" />;
   return <span className={`header-icon header-icon-${type}`} aria-hidden="true" />;
 }
@@ -640,22 +867,38 @@ export default function Home() {
   const [sort, setSort] = useState("추천순");
   const [detailQuantity, setDetailQuantity] = useState(1);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [boardMenuOpen, setBoardMenuOpen] = useState(false);
   const [diceMenuOpen, setDiceMenuOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [orderNumber, setOrderNumber] = useState("");
   const [form, setForm] = useState({ name: "", phone: "", email: "", receiver: "", receiverPhone: "", postcode: "", address: "", detailAddress: "", request: "" });
-  const [payment, setPayment] = useState("카드");
+  const [payment, setPayment] = useState("네이버페이");
   const [terms, setTerms] = useState(false);
   const [processing, setProcessing] = useState(false);
+  const [naverPayConfig, setNaverPayConfig] = useState<{ configured: boolean; clientId?: string; chainId?: string; mode?: "development" | "production" }>({ configured: false });
+  const [paymentError, setPaymentError] = useState("");
+  const [postcodeOpen, setPostcodeOpen] = useState(false);
+  const [postcodeStatus, setPostcodeStatus] = useState<"idle" | "loading" | "error">("idle");
   const [supportSearch, setSupportSearch] = useState("");
   const [selectedSupportPost, setSelectedSupportPost] = useState<number | null>(null);
   const [customProducts, setCustomProducts] = useState<Product[]>([]);
   const [adminForm, setAdminForm] = useState(emptyAdminForm);
   const [adminAuthenticated, setAdminAuthenticated] = useState(false);
+  const [customerLoginOpen, setCustomerLoginOpen] = useState(false);
+  const [customerLoggedIn, setCustomerLoggedIn] = useState(false);
+  const [customerCredentials, setCustomerCredentials] = useState({ email: "", password: "" });
   const [adminLoginOpen, setAdminLoginOpen] = useState(false);
   const [adminCredentials, setAdminCredentials] = useState({ id: "admin", password: "boardpick" });
   const [adminLoginError, setAdminLoginError] = useState("");
+  const completeNaverPayOrder = (approvedOrderNumber: string) => {
+    setPayment("네이버페이");
+    setOrderNumber(approvedOrderNumber);
+    setCart([]);
+    setView("complete");
+    setMenuOpen(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
   useEffect(() => {
     try {
@@ -672,17 +915,86 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    fetch(`${window.location.origin}${window.location.pathname.replace(/\/?$/, "/")}api/naverpay/config`).then((response) => response.json()).then((config) => setNaverPayConfig(config)).catch(() => setNaverPayConfig(localNaverPayConfig()));
+    const params = new URLSearchParams(window.location.search);
+    const resultCode = params.get("resultCode");
+    const paymentId = params.get("paymentId");
+    if (!resultCode) return;
+    if (resultCode !== "Success" || !paymentId) {
+      setPaymentError(params.get("resultMessage") || "네이버페이 결제가 취소되었거나 완료되지 않았습니다.");
+      window.history.replaceState({}, "", window.location.pathname);
+      return;
+    }
+    setProcessing(true);
+    fetch(`${window.location.origin}${window.location.pathname.replace(/\/?$/, "/")}api/naverpay/approve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paymentId, expectedAmount: Number(window.sessionStorage.getItem("boardpick-naverpay-amount") || 0) }),
+    }).then(async (response) => {
+      const result = await response.json();
+      if (!response.ok || !result.ok) throw new Error(result.message || "네이버페이 결제 승인에 실패했습니다.");
+      completeNaverPayOrder(result.merchantPayKey || `BP-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`);
+    }).catch((error) => setPaymentError(error instanceof Error ? error.message : "네이버페이 결제 승인에 실패했습니다.")).finally(() => {
+      setProcessing(false);
+      window.sessionStorage.removeItem("boardpick-naverpay-amount");
+      window.history.replaceState({}, "", window.location.pathname);
+    });
+  }, []);
+
+  useEffect(() => {
     if (view !== "home" || heroPaused || heroInteracting) return;
     const timer = window.setTimeout(() => setHeroSlide((current) => (current + 1) % heroSlides.length), 5500);
     return () => window.clearTimeout(timer);
   }, [view, heroPaused, heroInteracting, heroSlide]);
+
+  useEffect(() => {
+    if (!postcodeOpen) return;
+    let cancelled = false;
+    const container = document.getElementById("daum-postcode-embed");
+    if (!container) return;
+
+    setPostcodeStatus("loading");
+    loadDaumPostcode().then(() => {
+      if (cancelled || !window.daum?.Postcode) return;
+      container.replaceChildren();
+      const postcode = new window.daum.Postcode({
+        width: "100%",
+        height: "100%",
+        oncomplete: (data) => {
+          const baseAddress = data.roadAddress || data.address || data.jibunAddress;
+          const extraAddress = data.addressType === "R"
+            ? [data.bname, data.buildingName].filter(Boolean).join(", ")
+            : "";
+          const fullAddress = `${baseAddress}${extraAddress ? ` (${extraAddress})` : ""}`;
+          setForm((current) => ({ ...current, postcode: data.zonecode, address: fullAddress, detailAddress: "" }));
+          setPostcodeStatus("idle");
+          setPostcodeOpen(false);
+          window.setTimeout(() => document.getElementById("checkout-detail-address")?.focus(), 0);
+        },
+        onclose: () => {
+          setPostcodeStatus("idle");
+          setPostcodeOpen(false);
+        },
+      });
+      postcode.embed(container, { autoClose: true });
+      setPostcodeStatus("idle");
+    }).catch(() => {
+      if (!cancelled) setPostcodeStatus("error");
+    });
+
+    return () => {
+      cancelled = true;
+      container.replaceChildren();
+    };
+  }, [postcodeOpen]);
 
   const catalogProducts = useMemo(() => [...customProducts, ...products], [customProducts]);
   const activeHero = heroSlides[heroSlide];
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
   const selectedCart = cart.filter((item) => item.selected);
   const subtotal = selectedCart.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
-  const shipping = subtotal === 0 || subtotal >= 50000 ? 0 : 3000;
+  const paymentTestOnly = selectedCart.length > 0 && selectedCart.every((item) => item.product.paymentTest);
+  const shipping = subtotal === 0 || subtotal >= 50000 || paymentTestOnly ? 0 : 3000;
   const total = subtotal + shipping;
   const selectedDetail = productDetailCopy[selectedProduct.id] ?? {
     title: selectedProduct.name,
@@ -735,7 +1047,7 @@ export default function Home() {
     let list = catalogProducts.filter((p) => {
       const text = `${p.name} ${p.genre} ${p.category}`.toLowerCase();
       const matchesSearch = text.includes(search.toLowerCase());
-      const matchesCategory = category === "전체" ? p.category === "보드게임" : p.category === category || p.genre.includes(category) || Boolean(p.diceTags?.includes(category));
+      const matchesCategory = p.paymentTest && view === "new" ? true : category === "전체" ? p.category === "보드게임" : p.category === category || p.genre.includes(category) || Boolean(p.diceTags?.includes(category));
       const matchesDiceMaterial = !isDiceCategory || diceMaterial === "전체" || Boolean(p.diceTags?.includes(diceMaterial));
       const playerRange = numericRange(p.players);
       const playerMin = playerRange[0] ?? 0;
@@ -751,7 +1063,7 @@ export default function Home() {
         || (timeFilter === "60분 이하" && maxMinutes > 30 && maxMinutes <= 60)
         || (timeFilter === "60분+" && maxMinutes > 60);
       const matchesLevel = p.category !== "보드게임" || levelFilter === "전체" || p.level === levelFilter;
-      const matchesView = view === "new" ? p.badge === "NEW" || p.badge === "재입고" : view === "featured" ? p.featured : true;
+      const matchesView = view === "new" ? p.badge === "NEW" || p.badge === "재입고" || p.paymentTest : view === "featured" ? p.featured : true;
       return matchesSearch && matchesCategory && matchesDiceMaterial && matchesPlayers && matchesTime && matchesLevel && matchesView;
     });
     if (sort === "추천순") list = [...list].sort((a, b) => Number(b.id > 18) - Number(a.id > 18) || Number(b.id === 18) - Number(a.id === 18));
@@ -958,6 +1270,7 @@ export default function Home() {
 
   const handleSearch = (event: FormEvent) => {
     event.preventDefault();
+    setMobileSearchOpen(false);
     setCategory("전체");
     navigateFromTop("shop");
   };
@@ -975,9 +1288,38 @@ export default function Home() {
     form.name && form.phone && form.email && form.receiver && form.receiverPhone && form.postcode && form.address && form.detailAddress && terms && selectedCart.length
   );
 
-  const placeOrder = (event: FormEvent) => {
+  const placeOrder = async (event: FormEvent) => {
     event.preventDefault();
     if (!checkoutValid) return;
+    setPaymentError("");
+    if (payment === "네이버페이") {
+      if (!naverPayConfig.configured || !naverPayConfig.clientId || !naverPayConfig.chainId) {
+        setPaymentError("네이버페이 테스트 인증값이 아직 설정되지 않았습니다. 환경변수를 설정한 뒤 다시 시도해 주세요.");
+        return;
+      }
+      setProcessing(true);
+      try {
+        await loadNaverPay();
+        const merchantPayKey = `BP-${Date.now()}`;
+        const productName = selectedCart[0]?.product.name || "보드픽 상품";
+        window.sessionStorage.setItem("boardpick-naverpay-amount", String(total));
+        window.Naver?.Pay.create({ mode: naverPayConfig.mode || "development", payType: "normal", openType: "page", clientId: naverPayConfig.clientId, chainId: naverPayConfig.chainId }).open({
+          merchantUserKey: `guest-${merchantPayKey}`,
+          merchantPayKey,
+          productName,
+          productCount: selectedCart.reduce((sum, item) => sum + item.quantity, 0),
+          totalPayAmount: total,
+          taxScopeAmount: total,
+          taxExScopeAmount: 0,
+          returnUrl: `${window.location.origin}${window.location.pathname}`,
+          productItems: selectedCart.map((item) => ({ categoryType: "ETC", categoryId: "ETC", uid: String(item.product.id), name: item.product.name, payReferrer: "ETC", count: item.quantity })),
+        });
+      } catch (error) {
+        setProcessing(false);
+        setPaymentError(error instanceof Error ? error.message : "네이버페이 결제창을 열지 못했습니다.");
+      }
+      return;
+    }
     setProcessing(true);
     window.setTimeout(() => {
       setOrderNumber(`BP-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`);
@@ -1060,20 +1402,27 @@ export default function Home() {
         <div className="header-main page-shell">
           <button className="mobile-menu-button" onClick={() => setMenuOpen(!menuOpen)} aria-label="메뉴 열기" aria-expanded={menuOpen}>☰</button>
           <button className="brand" onClick={() => navigateFromTop("home")} aria-label="보드픽 홈">
-            <span className="brand-mark"><i /><i /><i /><i /></span>
-            <span>보드픽<small>BOARDPICK</small></span>
+            <img className="brand-logo" src={siteAsset("/brand/boardpick-logo.png")} alt="보드픽 BOARD PICK" />
           </button>
           <form className="search-box" onSubmit={handleSearch}>
             <label className="sr-only" htmlFor="site-search">상품 검색</label>
             <input id="site-search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="어떤 게임을 찾으세요?" />
-            <button type="submit" aria-label="검색">⌕</button>
+            <button type="submit" aria-label="검색"><EmptyIcon type="search" /></button>
           </form>
           <div className="header-actions">
-            <button onClick={() => { setSearch(""); setCategory("전체"); navigateFromTop("shop"); }}><EmptyIcon type="search" /><small>검색</small></button>
             <button onClick={() => { setBoardMenuOpen(false); setDiceMenuOpen(false); showToast(liked.length ? `찜한 상품이 ${liked.length}개 있어요.` : "아직 찜한 상품이 없어요."); }}><EmptyIcon type="heart" /><small>찜 {liked.length || ""}</small></button>
             <button className="cart-action" onClick={() => navigateFromTop("cart")}><EmptyIcon type="bag" /><small>장바구니</small>{cartCount > 0 && <b>{cartCount}</b>}</button>
+            <button onClick={() => customerLoggedIn ? showToast("로그인되어 있어요.") : setCustomerLoginOpen(true)}><EmptyIcon type="user" /><small>{customerLoggedIn ? "내 정보" : "로그인"}</small></button>
           </div>
+          <button className="mobile-search-button" type="button" onClick={() => setMobileSearchOpen((open) => !open)} aria-label={mobileSearchOpen ? "검색창 닫기" : "검색창 열기"} aria-expanded={mobileSearchOpen} aria-controls="mobile-search-panel"><EmptyIcon type="search" /></button>
         </div>
+        <form id="mobile-search-panel" className={`mobile-search-panel ${mobileSearchOpen ? "open" : ""}`} onSubmit={handleSearch}>
+          <div className="page-shell">
+            <label className="sr-only" htmlFor="mobile-site-search">상품 검색</label>
+            <input id="mobile-site-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="어떤 게임을 찾으세요?" />
+            <button type="submit" aria-label="검색"><EmptyIcon type="search" /></button>
+          </div>
+        </form>
         <nav className={`main-nav ${menuOpen ? "open" : ""}`} aria-label="주요 메뉴">
           <div className="primary-nav page-shell">
             <button className={`submenu-trigger ${boardMenuOpen ? "active" : ""}`} onClick={() => { setDiceMenuOpen(false); setBoardMenuOpen(!boardMenuOpen); }} aria-expanded={boardMenuOpen} aria-controls="board-game-submenu">보드게임 <span aria-hidden="true">⌄</span></button>
@@ -1133,9 +1482,10 @@ export default function Home() {
                 <div className="hero-note">{(activeHero.id === "curation" ? ["평균 평점 4.8", "에디터 플레이 검증", "한글판 명확 표기"] : activeHero.id === "dice" ? ["재질별 큐레이션", "7종 다각면 세트", "숫자 가독성 검수"] : ["08.11 신규 입고", "2–4인 전략 모험", "에디터 추천작"]).map((note) => <span key={note}>{note}</span>)}</div>
               </div>
               <div className={`hero-stage hero-stage-${activeHero.visual}`} aria-label={`${activeHero.tab} 대표 상품`}>
-                {activeHero.visual === "boards" && <><img className="hero-cases-photo image-cutout" src={siteAsset("/boardgame-cases-hero.png")} alt="문 가든, 코스믹 카페, 포레스트 포스트 보드게임 상자와 게임 말" /><span className="hero-photo-caption">BOARDPICK CURATED · 03 GAMES</span></>}
-                {activeHero.visual === "dice" && <div className="hero-dice-composition" role="img" aria-label="오로라, 메탈 드래곤, 갤럭시 다각면 주사위"><img src={siteAsset("/product-art/aurora-d20-v3.png")} alt="" /><img src={siteAsset("/product-art/metal-dragon-d20-v3.png")} alt="" /><img src={siteAsset("/product-art/galaxy-d20-v3.png")} alt="" /></div>}
+                {activeHero.visual === "boards" && <><CutoutImage className="hero-cases-photo" src="/boardgame-cases-hero.png" alt="문 가든, 코스믹 카페, 포레스트 포스트 보드게임 상자와 게임 말" /><span className="hero-photo-caption">BOARDPICK CURATED · 03 GAMES</span></>}
+                {activeHero.visual === "dice" && <div className="hero-dice-composition" role="img" aria-label="오로라, 메탈 드래곤, 갤럭시 다각면 주사위"><CutoutImage src="/product-art/aurora-d20-v3.png" /><CutoutImage src="/product-art/metal-dragon-d20-v3.png" /><CutoutImage src="/product-art/galaxy-d20-v3.png" /></div>}
                 {activeHero.visual === "dragon" && <div className="hero-dragon-product"><ProductArt product={products[17]} large cutout /><span>DRAGON'S KEEP<br /><small>STRATEGY ADVENTURE</small></span></div>}
+                <strong className="hero-mobile-product-title">{activeHero.visual === "boards" ? "보드픽 추천 보드게임" : activeHero.visual === "dice" ? "오로라 · 메탈 · 갤럭시 다이스" : products[17].name}</strong>
               </div>
             </div>
             <button className="hero-arrow hero-arrow-prev" type="button" onClick={() => moveHero(-1)} aria-label="이전 배너">‹</button>
@@ -1161,6 +1511,7 @@ export default function Home() {
               <button className="featured-visual" onClick={() => openProduct(products[0])} aria-label={`${products[0].name} 상세 보기`}>
                 <ProductArt product={products[0]} large cutout />
                 <span className="featured-number">01</span>
+                <strong className="featured-mobile-title">{products[0].name}</strong>
               </button>
               <div className="featured-copy">
                 <span className="mini-label">가족이 함께 시작하기 좋은 전략 게임</span>
@@ -1175,7 +1526,7 @@ export default function Home() {
 
           <section className="content-section page-shell">
             <SectionHeader eyebrow="JUST ARRIVED" title="새로 들어왔어요" description="가장 최근에 입고된 게임과 플레이 용품을 만나보세요." target="new" />
-            <div className="product-grid product-grid-scroll">{catalogProducts.filter((p) => p.badge === "NEW" || p.badge === "재입고").slice(0, 8).map((p) => <ProductCard key={p.id} product={p} />)}</div>
+            <div className="product-grid product-grid-scroll">{catalogProducts.filter((p) => p.badge === "NEW" || p.badge === "재입고" || p.paymentTest).sort((a, b) => Number(Boolean(b.paymentTest)) - Number(Boolean(a.paymentTest))).slice(0, 8).map((p) => <ProductCard key={p.id} product={p} />)}</div>
           </section>
 
           <section className="content-section page-shell">
@@ -1241,7 +1592,7 @@ export default function Home() {
             <div className="filter-tools"><span><strong>{visibleProducts.length}</strong>개의 상품</span>{!isDiceCategory && category !== "액세서리" && <button type="button" onClick={() => { setCategory("보드게임"); setPlayerFilter("전체"); setTimeFilter("전체"); setLevelFilter("전체"); }}>조건 초기화</button>}<label>정렬 <select value={sort} onChange={(e) => setSort(e.target.value)}><option>추천순</option><option>평점순</option><option>낮은 가격순</option><option>높은 가격순</option></select></label></div>
           </div>
           {search && <div className="search-result-copy">‘{search}’ 검색 결과 <strong>{visibleProducts.length}</strong>개 <button onClick={() => setSearch("")}>검색어 지우기</button></div>}
-          {visibleProducts.length ? <div className="product-grid collection-grid">{visibleProducts.map((p) => <ProductCard key={p.id} product={p} />)}</div> : <div className="empty-state"><span>⌕</span><h2>조건에 맞는 상품이 없어요</h2><p>검색어나 필터를 바꿔 다시 찾아보세요.</p><button className="button-primary" onClick={() => { setSearch(""); setCategory("전체"); }}>전체 상품 보기</button></div>}
+          {visibleProducts.length ? <div className="product-grid collection-grid">{visibleProducts.map((p) => <ProductCard key={p.id} product={p} />)}</div> : <div className="empty-state"><EmptyIcon type="search" /><h2>조건에 맞는 상품이 없어요</h2><p>검색어나 필터를 바꿔 다시 찾아보세요.</p><button className="button-primary" onClick={() => { setSearch(""); setCategory("전체"); }}>전체 상품 보기</button></div>}
         </section>
       )}
 
@@ -1308,7 +1659,7 @@ export default function Home() {
               </section>
               <section className="admin-recent">
                 <div className="admin-preview-heading"><span>최근 등록 상품</span><small>{customProducts.length}개</small></div>
-                {customProducts.length ? <div>{customProducts.slice(0, 5).map((product) => <article key={product.id}><img className="image-cutout" src={siteAsset(product.image)} alt="" /><span><strong>{product.name}</strong><small>{product.category} · {formatWon(product.price)}</small></span><button type="button" onClick={() => openProduct(product)}>보기</button><button className="admin-delete" type="button" onClick={() => removeCustomProduct(product.id)}>삭제</button></article>)}</div> : <p>아직 직접 등록한 상품이 없습니다.</p>}
+                {customProducts.length ? <div>{customProducts.slice(0, 5).map((product) => <article key={product.id}><CutoutImage src={product.image} /><span><strong>{product.name}</strong><small>{product.category} · {formatWon(product.price)}</small></span><button type="button" onClick={() => openProduct(product)}>보기</button><button className="admin-delete" type="button" onClick={() => removeCustomProduct(product.id)}>삭제</button></article>)}</div> : <p>아직 직접 등록한 상품이 없습니다.</p>}
               </section>
             </aside>
           </div>
@@ -1325,6 +1676,7 @@ export default function Home() {
               <h1>{selectedProduct.name}</h1>
               <div className="detail-rating"><span>★</span> {selectedProduct.rating} <button type="button" className="review-jump" onClick={() => scrollToDetail("review-summary")}>리뷰 {selectedProduct.reviews}개</button></div>
               <p className="detail-description">{selectedProduct.description}</p>
+              {selectedProduct.paymentTest && <p className="payment-test-notice"><b>TEST</b><span>최종 결제 금액 1,000원 · 무료배송 · 실제 상품은 발송되지 않습니다.</span></p>}
               <div className="detail-price">{selectedProduct.originalPrice && <del>{formatWon(selectedProduct.originalPrice)}</del>}<strong>{formatWon(selectedProduct.price)}</strong>{selectedProduct.originalPrice && <b>{Math.round((1 - selectedProduct.price / selectedProduct.originalPrice) * 100)}%</b>}</div>
               <div className="detail-specs"><div><small>인원 / 규격</small><strong>{selectedProduct.players}</strong></div><div><small>시간 / 구성</small><strong>{selectedProduct.time}</strong></div><div><small>난이도 / 특징</small><strong>{selectedProduct.level}</strong></div></div>
               <div className="delivery-info"><span>배송</span><p><strong>3,000원</strong><small>50,000원 이상 무료 · 오늘 주문 시 내일 출발</small></p></div>
@@ -1375,7 +1727,7 @@ export default function Home() {
           </nav>
           <div className="support-toolbar">
             <strong>전체 <b>{supportBoard.posts.length}</b>건</strong>
-            <label><span className="sr-only">게시글 검색</span><input value={supportSearch} onChange={(event) => setSupportSearch(event.target.value)} placeholder="제목을 검색해보세요" /><i aria-hidden="true">⌕</i></label>
+            <label><span className="sr-only">게시글 검색</span><input value={supportSearch} onChange={(event) => setSupportSearch(event.target.value)} placeholder="제목을 검색해보세요" /><EmptyIcon type="search" /></label>
           </div>
           <div className="support-board">
             <div className="support-board-head"><span>번호</span><span>제목</span><span>등록일</span><span>조회</span></div>
@@ -1400,7 +1752,7 @@ export default function Home() {
           {cart.length ? <div className="cart-layout"><div className="cart-list">
             <div className="cart-select-all"><label><input type="checkbox" checked={cart.every((item) => item.selected)} onChange={(e) => setCart(cart.map((item) => ({ ...item, selected: e.target.checked })))} /> 전체 선택</label><button onClick={() => setCart(cart.filter((item) => !item.selected))}>선택 삭제</button></div>
             {cart.map((item) => <article className="cart-item" key={item.product.id}><input aria-label={`${item.product.name} 선택`} type="checkbox" checked={item.selected} onChange={() => setCart(cart.map((entry) => entry.product.id === item.product.id ? { ...entry, selected: !entry.selected } : entry))} /><button className="cart-art" onClick={() => openProduct(item.product)}><ProductArt product={item.product} cutout /></button><div className="cart-item-info"><small>{item.product.genre}</small><button onClick={() => openProduct(item.product)}>{item.product.name}</button><span>{item.product.players} · {item.product.time}</span><div className="quantity-stepper"><button onClick={() => updateQuantity(item.product.id, -1)}>−</button><b>{item.quantity}</b><button onClick={() => updateQuantity(item.product.id, 1)}>＋</button></div></div><strong>{formatWon(item.product.price * item.quantity)}</strong><button className="remove-item" onClick={() => setCart(cart.filter((entry) => entry.product.id !== item.product.id))} aria-label={`${item.product.name} 삭제`}>×</button></article>)}
-          </div><aside className="order-summary"><h2>결제 예정 금액</h2><dl><div><dt>상품 금액</dt><dd>{formatWon(subtotal)}</dd></div><div><dt>배송비</dt><dd>{shipping ? formatWon(shipping) : "무료"}</dd></div></dl>{subtotal < 50000 && <p>{formatWon(50000 - subtotal)} 더 담으면 무료배송</p>}<div className="summary-total"><span>총 결제 금액</span><strong>{formatWon(total)}</strong></div><button className="button-primary" disabled={!selectedCart.length} onClick={() => navigate("checkout")}>선택 상품 주문하기</button><button className="continue-button" onClick={() => navigate("shop")}>계속 쇼핑하기</button></aside></div> : <div className="empty-state cart-empty"><span>▢</span><h2>장바구니가 비어 있어요</h2><p>오늘의 즐거움을 채워줄 게임을 골라보세요.</p><button className="button-primary" onClick={() => navigate("shop")}>상품 둘러보기</button></div>}
+          </div><aside className="order-summary"><h2>결제 예정 금액</h2><dl><div><dt>상품 금액</dt><dd>{formatWon(subtotal)}</dd></div><div><dt>배송비</dt><dd>{shipping ? formatWon(shipping) : "무료"}</dd></div></dl>{subtotal < 50000 && !paymentTestOnly && <p>{formatWon(50000 - subtotal)} 더 담으면 무료배송</p>}{paymentTestOnly && <p>결제 테스트 상품은 무료배송입니다.</p>}<div className="summary-total"><span>총 결제 금액</span><strong>{formatWon(total)}</strong></div><button className="button-primary" disabled={!selectedCart.length} onClick={() => navigate("checkout")}>선택 상품 주문하기</button><button className="continue-button" onClick={() => navigate("shop")}>계속 쇼핑하기</button></aside></div> : <div className="empty-state cart-empty"><span>▢</span><h2>장바구니가 비어 있어요</h2><p>오늘의 즐거움을 채워줄 게임을 골라보세요.</p><button className="button-primary" onClick={() => navigate("shop")}>상품 둘러보기</button></div>}
         </section>
       )}
 
@@ -1412,11 +1764,11 @@ export default function Home() {
             <div className="checkout-form">
               <section className="form-section"><h2>주문 상품 <small>{selectedCart.length}건</small></h2>{selectedCart.map((item) => <div className="checkout-product" key={item.product.id}><ProductArt product={item.product} cutout /><span><strong>{item.product.name}</strong><small>{item.product.players} · 수량 {item.quantity}개</small></span><b>{formatWon(item.product.price * item.quantity)}</b></div>)}</section>
               <section className="form-section"><h2>주문자 정보</h2><div className="form-grid"><label>이름 <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="이름을 입력해주세요" /></label><label>휴대전화 <input required value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="010-0000-0000" inputMode="tel" /></label><label className="full">이메일 <input required type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="boardpick@example.com" /></label></div></section>
-              <section className="form-section"><div className="form-section-title"><h2>배송지 정보</h2><button type="button" onClick={() => setForm({ ...form, receiver: form.name, receiverPhone: form.phone })}>주문자 정보와 동일</button></div><div className="form-grid"><label>받는 분 <input required value={form.receiver} onChange={(e) => setForm({ ...form, receiver: e.target.value })} placeholder="받는 분 이름" /></label><label>휴대전화 <input required value={form.receiverPhone} onChange={(e) => setForm({ ...form, receiverPhone: e.target.value })} placeholder="010-0000-0000" /></label><label className="postcode full">우편번호 <span><input required value={form.postcode} onChange={(e) => setForm({ ...form, postcode: e.target.value })} placeholder="우편번호" /><button type="button" onClick={() => setForm({ ...form, postcode: "04524", address: "서울특별시 중구 세종대로 110" })}>주소 찾기</button></span></label><label className="full">기본 주소 <input required value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="주소를 입력해주세요" /></label><label className="full">상세 주소 <input required value={form.detailAddress} onChange={(e) => setForm({ ...form, detailAddress: e.target.value })} placeholder="상세 주소를 입력해주세요" /></label><label className="full">배송 요청사항 <select value={form.request} onChange={(e) => setForm({ ...form, request: e.target.value })}><option value="">배송 요청사항을 선택해주세요</option><option>문 앞에 놓아주세요</option><option>경비실에 맡겨주세요</option><option>배송 전 연락해주세요</option></select></label></div></section>
-              <section className="form-section"><h2>결제 수단</h2><div className="payment-options">{["카드", "간편결제", "무통장입금"].map((item) => <button type="button" key={item} className={payment === item ? "active" : ""} onClick={() => setPayment(item)}><span>{payment === item ? "✓" : ""}</span>{item}</button>)}</div><p className="demo-note">데모 쇼핑몰입니다. 실제 금융 정보는 입력하거나 전송하지 않습니다.</p></section>
+              <section className="form-section"><div className="form-section-title"><h2>배송지 정보</h2><button type="button" onClick={() => setForm({ ...form, receiver: form.name, receiverPhone: form.phone })}>주문자 정보와 동일</button></div><div className="form-grid"><label>받는 분 <input required value={form.receiver} onChange={(e) => setForm({ ...form, receiver: e.target.value })} placeholder="받는 분 이름" /></label><label>휴대전화 <input required value={form.receiverPhone} onChange={(e) => setForm({ ...form, receiverPhone: e.target.value })} placeholder="010-0000-0000" /></label><label className="postcode full">우편번호 <span><input required readOnly value={form.postcode} placeholder="우편번호" /><button type="button" onClick={() => setPostcodeOpen(true)}>다음 주소 찾기</button></span><small>다음 우편번호 서비스에서 배송지를 검색합니다.</small></label><label className="full">기본 주소 <input required readOnly value={form.address} placeholder="주소 검색 후 자동 입력됩니다" /></label><label className="full">상세 주소 <input id="checkout-detail-address" required value={form.detailAddress} onChange={(e) => setForm({ ...form, detailAddress: e.target.value })} placeholder="동·호수 등 상세 주소를 입력해주세요" /></label><label className="full">배송 요청사항 <select value={form.request} onChange={(e) => setForm({ ...form, request: e.target.value })}><option value="">배송 요청사항을 선택해주세요</option><option>문 앞에 놓아주세요</option><option>경비실에 맡겨주세요</option><option>배송 전 연락해주세요</option></select></label></div></section>
+              <section className="form-section"><h2>결제 수단</h2><div className="payment-options">{["네이버페이", "카드", "무통장입금"].map((item) => <button type="button" key={item} className={`${payment === item ? "active" : ""} ${item === "네이버페이" ? "naver-pay-option" : ""}`} onClick={() => { setPayment(item); setPaymentError(""); }}><span>{payment === item ? "✓" : ""}</span>{item === "네이버페이" ? <><b>N</b>pay <small>TEST</small></> : item}</button>)}</div>{payment === "네이버페이" && <p className={`naver-pay-status ${naverPayConfig.configured ? "ready" : "pending"}`}><strong>{naverPayConfig.configured ? "테스트 결제 준비 완료" : "테스트 인증값 설정 필요"}</strong><span>네이버페이 개발환경에서는 실제 결제 금액이 청구되지 않습니다.</span></p>}{paymentError && <p className="payment-error" role="alert">{paymentError}</p>}<p className="demo-note">카드·무통장입금은 화면 흐름 확인용 데모이며, 네이버페이만 공식 개발환경 결제창을 사용합니다.</p></section>
               <section className="form-section terms-section"><label><input type="checkbox" checked={terms} onChange={(e) => setTerms(e.target.checked)} /><span><strong>필수 약관 전체 동의</strong><small>구매 조건 및 개인정보 수집·이용에 동의합니다.</small></span></label></section>
             </div>
-            <aside className="order-summary checkout-summary"><h2>최종 결제 금액</h2><dl><div><dt>상품 금액</dt><dd>{formatWon(subtotal)}</dd></div><div><dt>상품 할인</dt><dd>− 0원</dd></div><div><dt>배송비</dt><dd>{shipping ? formatWon(shipping) : "무료"}</dd></div></dl><div className="summary-total"><span>총 결제 금액</span><strong>{formatWon(total)}</strong></div><button className="button-primary" type="submit" disabled={!checkoutValid || processing}>{processing ? "결제 처리 중…" : `${formatWon(total)} 결제하기`}</button><small className="summary-caption">주문 내용을 확인했으며 결제에 동의합니다.</small></aside>
+            <aside className="order-summary checkout-summary"><h2>최종 결제 금액</h2><dl><div><dt>상품 금액</dt><dd>{formatWon(subtotal)}</dd></div><div><dt>상품 할인</dt><dd>− 0원</dd></div><div><dt>배송비</dt><dd>{shipping ? formatWon(shipping) : "무료"}</dd></div></dl><div className="summary-total"><span>총 결제 금액</span><strong>{formatWon(total)}</strong></div><button className={`button-primary ${payment === "네이버페이" ? "naver-pay-submit" : ""}`} type="submit" disabled={!checkoutValid || processing}>{processing ? "결제 처리 중…" : payment === "네이버페이" ? `Npay ${formatWon(total)} 테스트 결제` : `${formatWon(total)} 결제하기`}</button><small className="summary-caption">주문 내용을 확인했으며 결제에 동의합니다.</small></aside>
           </form>
         </section>
       )}
@@ -1424,7 +1776,7 @@ export default function Home() {
       {view === "complete" && (
         <section className="complete-page page-shell">
           <div className="flow-heading"><span>01 장바구니</span><span>02 주문·결제</span><span className="active">03 주문 완료</span></div>
-          <div className="complete-card"><div className="complete-check">✓</div><span className="eyebrow">ORDER COMPLETE</span><h1>주문이 완료되었어요</h1><p>보드픽을 이용해 주셔서 감사합니다.<br />안전하게 포장해 빠르게 보내드릴게요.</p><div className="order-number"><span>주문번호</span><strong>{orderNumber}</strong></div><div className="complete-info"><div><small>결제 수단</small><strong>{payment} · 데모 결제</strong></div><div><small>받는 분</small><strong>{form.receiver}</strong></div><div><small>배송지</small><strong>{form.address} {form.detailAddress}</strong></div></div><button className="button-primary" onClick={() => navigate("home")}>쇼핑 계속하기</button></div>
+          <div className="complete-card"><div className="complete-check">✓</div><span className="eyebrow">ORDER COMPLETE</span><h1>주문이 완료되었어요</h1><p>보드픽을 이용해 주셔서 감사합니다.<br />안전하게 포장해 빠르게 보내드릴게요.</p><div className="order-number"><span>주문번호</span><strong>{orderNumber}</strong></div><div className="complete-info"><div><small>결제 수단</small><strong>{payment} · {payment === "네이버페이" ? "테스트 승인" : "데모 결제"}</strong></div><div><small>받는 분</small><strong>{form.receiver}</strong></div><div><small>배송지</small><strong>{form.address} {form.detailAddress}</strong></div></div><button className="button-primary" onClick={() => navigate("home")}>쇼핑 계속하기</button></div>
         </section>
       )}
 
@@ -1437,8 +1789,24 @@ export default function Home() {
       </nav>
 
       <footer className="footer">
-        <div className="page-shell footer-grid"><div><button className="brand footer-brand" onClick={() => navigate("home")}><span className="brand-mark"><i /><i /><i /><i /></span><span>보드픽<small>BOARDPICK</small></span></button><p>오늘의 즐거움을 고르는 가장 쉬운 방법.<br />좋은 게임과 필요한 도구를 한곳에서 만나보세요.</p></div><div><strong>쇼핑</strong><button onClick={() => navigate("new")}>신상품</button><button onClick={() => navigate("featured")}>보드픽 추천</button><button onClick={() => navigate("shop")}>전체 상품</button></div><div><strong>고객 안내</strong><button onClick={() => openSupport("delivery")}>배송 안내</button><button onClick={() => openSupport("returns")}>교환·반품</button><button onClick={() => openSupport("faq")}>자주 묻는 질문</button></div><div><strong>고객센터</strong><b>02-1234-5678</b><small>평일 10:00–17:00<br />점심 12:00–13:00</small></div></div><div className="page-shell footer-bottom"><span>© 2026 BOARDPICK. All rights reserved.</span><span>이용약관 · 개인정보처리방침</span><button className="admin-access-link" onClick={openAdminAccess}>{adminAuthenticated ? "관리자 공간" : "관리자 로그인"}</button></div>
+        <div className="page-shell footer-grid"><div><button className="brand footer-brand" onClick={() => navigate("home")} aria-label="보드픽 홈"><img className="brand-logo" src={siteAsset("/brand/boardpick-logo.png")} alt="보드픽 BOARD PICK" /></button><p>오늘의 즐거움을 고르는 가장 쉬운 방법.<br />좋은 게임과 필요한 도구를 한곳에서 만나보세요.</p></div><div><strong>쇼핑</strong><button onClick={() => navigate("new")}>신상품</button><button onClick={() => navigate("featured")}>보드픽 추천</button><button onClick={() => navigate("shop")}>전체 상품</button></div><div><strong>고객 안내</strong><button onClick={() => openSupport("delivery")}>배송 안내</button><button onClick={() => openSupport("returns")}>교환·반품</button><button onClick={() => openSupport("faq")}>자주 묻는 질문</button></div><div><strong>고객센터</strong><b>02-1234-5678</b><small>평일 10:00–17:00<br />점심 12:00–13:00</small></div></div><div className="page-shell footer-bottom"><span>© 2026 BOARDPICK. All rights reserved.</span><span>이용약관 · 개인정보처리방침</span><button className="admin-access-link" onClick={openAdminAccess}>{adminAuthenticated ? "관리자 공간" : "관리자 로그인"}</button></div>
       </footer>
+      {customerLoginOpen && (
+        <div className="admin-login-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setCustomerLoginOpen(false); }}>
+          <section className="admin-login-dialog customer-login-dialog" role="dialog" aria-modal="true" aria-labelledby="customer-login-title">
+            <button className="admin-login-close" type="button" onClick={() => setCustomerLoginOpen(false)} aria-label="로그인 닫기">×</button>
+            <span className="eyebrow">BOARDPICK MEMBER</span>
+            <h2 id="customer-login-title">로그인</h2>
+            <p>보드픽 회원으로 로그인하고 찜한 상품과 주문 내역을 확인하세요.</p>
+            <form onSubmit={(event) => { event.preventDefault(); setCustomerLoggedIn(true); setCustomerLoginOpen(false); showToast("로그인되었습니다."); }}>
+              <label><span>이메일</span><input autoFocus required type="email" value={customerCredentials.email} onChange={(event) => setCustomerCredentials({ ...customerCredentials, email: event.target.value })} autoComplete="email" placeholder="이메일을 입력해 주세요" /></label>
+              <label><span>비밀번호</span><input required type="password" value={customerCredentials.password} onChange={(event) => setCustomerCredentials({ ...customerCredentials, password: event.target.value })} autoComplete="current-password" placeholder="비밀번호를 입력해 주세요" /></label>
+              <button className="button-primary" type="submit">로그인</button>
+            </form>
+            <small>현재는 화면 확인용 데모 로그인입니다.</small>
+          </section>
+        </div>
+      )}
       {adminLoginOpen && (
         <div className="admin-login-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setAdminLoginOpen(false); }}>
           <section className="admin-login-dialog" role="dialog" aria-modal="true" aria-labelledby="admin-login-title">
@@ -1453,6 +1821,16 @@ export default function Home() {
               <button className="button-primary" type="submit">관리자 공간으로 이동</button>
             </form>
             <small>로컬 데모 계정이 입력되어 있습니다. 버튼을 누르면 바로 이동합니다.</small>
+          </section>
+        </div>
+      )}
+      {postcodeOpen && (
+        <div className="postcode-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setPostcodeOpen(false); }}>
+          <section className="postcode-modal" role="dialog" aria-modal="true" aria-labelledby="postcode-modal-title">
+            <header><div><span className="eyebrow">DELIVERY ADDRESS</span><h2 id="postcode-modal-title">배송지 주소 찾기</h2></div><button type="button" onClick={() => setPostcodeOpen(false)} aria-label="주소 검색 닫기">×</button></header>
+            <div className="postcode-embed" id="daum-postcode-embed" />
+            {postcodeStatus === "loading" && <div className="postcode-feedback" role="status">다음 우편번호 서비스를 불러오는 중입니다.</div>}
+            {postcodeStatus === "error" && <div className="postcode-feedback postcode-error" role="alert"><strong>주소 검색을 불러오지 못했습니다.</strong><span>인터넷 연결을 확인한 뒤 다시 시도해 주세요.</span><button type="button" onClick={() => { setPostcodeOpen(false); window.setTimeout(() => setPostcodeOpen(true), 0); }}>다시 시도</button></div>}
           </section>
         </div>
       )}
