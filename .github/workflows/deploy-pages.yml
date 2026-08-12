@@ -17,6 +17,10 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      NEXT_PUBLIC_NAVER_PAY_CLIENT_ID: ${{ vars.NEXT_PUBLIC_NAVER_PAY_CLIENT_ID }}
+      NEXT_PUBLIC_NAVER_PAY_CHAIN_ID: ${{ vars.NEXT_PUBLIC_NAVER_PAY_CHAIN_ID }}
+      NAVER_PAY_MODE: development
     steps:
       - name: Checkout
         uses: actions/checkout@v4
