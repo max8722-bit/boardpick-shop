@@ -50,7 +50,7 @@ const json = (body: unknown, status = 200, origin?: string) => Response.json(bod
 
 const allowedOrigin = (request: Request) => {
   const origin = request.headers.get("origin") ?? "";
-  const configured = (process.env.CHAT_ALLOWED_ORIGINS ?? "http://localhost:3000,https://max8722-bit.github.io").split(",").map((value) => value.trim());
+  const configured = (process.env.CHAT_ALLOWED_ORIGINS ?? "http://localhost:3000,https://max8722-bit.github.io,https://boardpick-shop.max8722.chatgpt.site").split(",").map((value) => value.trim());
   return configured.includes(origin) ? origin : "";
 };
 
@@ -112,7 +112,9 @@ export async function POST(request: Request) {
         model: process.env.GROQ_MODEL || "openai/gpt-oss-20b",
         messages: [{ role: "system", content: SYSTEM_PROMPT }, ...messages],
         temperature: 0.35,
-        max_completion_tokens: 420,
+        max_completion_tokens: 700,
+        reasoning_effort: "low",
+        include_reasoning: false,
       }),
     });
 

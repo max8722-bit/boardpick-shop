@@ -36,6 +36,19 @@ type Product = {
 type CartItem = { product: Product; quantity: number; selected: boolean };
 type ChatMessage = { role: "user" | "assistant"; content: string };
 
+const getChatApiUrl = () => {
+  const configuredUrl = String(import.meta.env.VITE_CHAT_API_URL ?? "").trim();
+
+  try {
+    // A configured absolute URL is used by the static GitHub Pages build.
+    // Relative values remain useful for local development and are resolved
+    // against the site root instead of the current client-side page path.
+    return new URL(configuredUrl || "/api/chat", window.location.origin).toString();
+  } catch {
+    throw new Error("AI 상담 연결 주소가 올바르지 않습니다. 잠시 후 다시 이용해 주세요.");
+  }
+};
+
 type DaumPostcodeData = {
   zonecode: string;
   address: string;
@@ -934,7 +947,7 @@ export default function Home() {
     setChatError("");
     setChatLoading(true);
     try {
-      const endpoint = import.meta.env.VITE_CHAT_API_URL || `${window.location.origin}${window.location.pathname.replace(/\/?$/, "/")}api/chat`;
+      const endpoint = getChatApiUrl();
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -944,7 +957,9 @@ export default function Home() {
       if (!response.ok || !result.answer) throw new Error(result.message || "답변을 불러오지 못했습니다.");
       setChatMessages((current) => [...current, { role: "assistant", content: result.answer as string }]);
     } catch (error) {
-      setChatError(error instanceof Error ? error.message : "AI 상담에 연결하지 못했습니다.");
+      const message = error instanceof Error ? error.message : "";
+      const isInternalBrowserError = message === "The string did not match the expected pattern." || message === "Failed to fetch";
+      setChatError(isInternalBrowserError || !message ? "AI 상담에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요." : message);
     } finally {
       setChatLoading(false);
     }
