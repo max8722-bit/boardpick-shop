@@ -632,6 +632,63 @@ const products: Product[] = [
     description: "네이버페이 개발환경과 주문·결제 화면을 확인하기 위한 1,000원 테스트 전용 상품입니다. 실제 배송은 진행되지 않습니다.",
     stock: 999,
   },
+  {
+    id: 20,
+    name: "크림슨 엠버 D20",
+    label: "CRIMSON EMBER",
+    image: "/product-art/crimson-ember-d20.png",
+    category: "주사위",
+    genre: "주사위·레진",
+    diceTags: ["다각면 세트", "레진"],
+    price: 12800,
+    players: "D20 단품",
+    time: "다각면",
+    level: "레진",
+    received: "08.12 입고",
+    badge: "NEW",
+    art: ["#8f171c", "#d49232", "#f1c46c"],
+    rating: 4.9,
+    reviews: 18,
+    description: "투명한 루비 레진 속에 구리빛 포일을 담아 불꽃처럼 반짝이는 프리미엄 D20 주사위입니다.",
+  },
+  {
+    id: 21,
+    name: "타이드 오팔 D20",
+    label: "TIDE OPAL",
+    image: "/product-art/tide-opal-d20.png",
+    category: "주사위",
+    genre: "주사위·레진",
+    diceTags: ["다각면 세트", "레진"],
+    price: 13800,
+    players: "D20 단품",
+    time: "다각면",
+    level: "오팔 레진",
+    received: "08.12 입고",
+    badge: "NEW",
+    art: ["#1a9098", "#88e2dd", "#e9d48a"],
+    rating: 4.9,
+    reviews: 12,
+    description: "청록빛 오팔 레진과 은은한 골드 숫자가 파도처럼 빛나는 투명 D20 주사위입니다.",
+  },
+  {
+    id: 22,
+    name: "옵시디언 크라운 D6 세트",
+    label: "OBSIDIAN CROWN",
+    image: "/product-art/obsidian-crown-d6.png",
+    category: "주사위",
+    genre: "주사위·메탈",
+    diceTags: ["D6 세트", "메탈"],
+    price: 34800,
+    players: "6개 세트",
+    time: "D6",
+    level: "아연 합금",
+    received: "08.12 입고",
+    badge: "NEW",
+    art: ["#252525", "#a87836", "#d9bc79"],
+    rating: 4.8,
+    reviews: 9,
+    description: "무광 흑금속 표면에 앤티크 골드 테두리를 더한 묵직한 프리미엄 D6 여섯 개 세트입니다.",
+  },
 ];
 
 const formatWon = (value: number) => `${value.toLocaleString("ko-KR")}원`;
@@ -1056,6 +1113,9 @@ export default function Home() {
     contents: selectedProduct.description,
   };
   const isDiceCategory = diceTypeFilters.some((item) => item.value === category);
+  const boardTopActive = boardMenuOpen || view === "new" || view === "featured" || (view === "shop" && !isDiceCategory && category !== "액세서리") || (view === "detail" && selectedProduct.category === "보드게임");
+  const diceTopActive = diceMenuOpen || (view === "shop" && isDiceCategory) || (view === "detail" && selectedProduct.category === "주사위");
+  const accessoryTopActive = (view === "shop" && category === "액세서리") || (view === "detail" && selectedProduct.category === "액세서리");
   const showDiceMaterialFilters = category === "다각면 세트" || category === "D6 세트";
   const supportView = (["delivery", "returns", "faq"] as SupportView[]).includes(view as SupportView) ? view as SupportView : null;
   const supportBoard = supportView ? supportBoards[supportView] : null;
@@ -1476,9 +1536,9 @@ export default function Home() {
         </form>
         <nav className={`main-nav ${menuOpen ? "open" : ""}`} aria-label="주요 메뉴">
           <div className="primary-nav page-shell">
-            <button className={`submenu-trigger ${boardMenuOpen ? "active" : ""}`} onClick={() => { setDiceMenuOpen(false); setBoardMenuOpen(!boardMenuOpen); }} aria-expanded={boardMenuOpen} aria-controls="board-game-submenu">보드게임 <span aria-hidden="true">⌄</span></button>
-            <button className={`submenu-trigger ${diceMenuOpen ? "active" : ""}`} onClick={() => { setBoardMenuOpen(false); setDiceMenuOpen(!diceMenuOpen); }} aria-expanded={diceMenuOpen} aria-controls="dice-submenu">주사위 <span aria-hidden="true">⌄</span></button>
-            <button onClick={() => { setSearch(""); setCategory("액세서리"); navigateFromTop("shop"); }}>액세서리</button>
+            <button className={`submenu-trigger nav-board ${boardTopActive ? "active" : ""}`} onClick={() => { setDiceMenuOpen(false); setBoardMenuOpen(!boardMenuOpen); }} aria-expanded={boardMenuOpen} aria-controls="board-game-submenu">보드게임 <span aria-hidden="true">⌄</span></button>
+            <button className={`submenu-trigger nav-dice ${diceTopActive ? "active" : ""}`} onClick={() => { setBoardMenuOpen(false); setDiceMenuOpen(!diceMenuOpen); }} aria-expanded={diceMenuOpen} aria-controls="dice-submenu">주사위 <span aria-hidden="true">⌄</span></button>
+            <button className={`nav-accessory ${accessoryTopActive ? "active" : ""}`} onClick={() => { setSearch(""); setCategory("액세서리"); navigateFromTop("shop"); }}>액세서리</button>
           </div>
           {boardMenuOpen && (
             <div className="board-subnav" id="board-game-submenu">
@@ -1534,9 +1594,9 @@ export default function Home() {
               </div>
               <div className={`hero-stage hero-stage-${activeHero.visual}`} aria-label={`${activeHero.tab} 대표 상품`}>
                 {activeHero.visual === "boards" && <><CutoutImage className="hero-cases-photo" src="/boardgame-cases-hero.png" alt="문 가든, 코스믹 카페, 포레스트 포스트 보드게임 상자와 게임 말" /><span className="hero-photo-caption">BOARDPICK CURATED · 03 GAMES</span></>}
-                {activeHero.visual === "dice" && <div className="hero-dice-composition" role="img" aria-label="오로라, 메탈 드래곤, 갤럭시 다각면 주사위"><CutoutImage src="/product-art/aurora-d20-v3.png" /><CutoutImage src="/product-art/metal-dragon-d20-v3.png" /><CutoutImage src="/product-art/galaxy-d20-v3.png" /></div>}
+                {activeHero.visual === "dice" && <div className="hero-dice-composition" role="img" aria-label="오로라, 메탈 드래곤, 갤럭시, 타이드 오팔 다각면 주사위"><CutoutImage src="/product-art/aurora-d20-v3.png" /><CutoutImage src="/product-art/metal-dragon-d20-v3.png" /><CutoutImage src="/product-art/galaxy-d20-v3.png" /><CutoutImage src="/product-art/tide-opal-d20.png" /></div>}
                 {activeHero.visual === "dragon" && <div className="hero-dragon-product"><ProductArt product={products[17]} large cutout /><span>DRAGON'S KEEP<br /><small>STRATEGY ADVENTURE</small></span></div>}
-                <strong className="hero-mobile-product-title">{activeHero.visual === "boards" ? "보드픽 추천 보드게임" : activeHero.visual === "dice" ? "오로라 · 메탈 · 갤럭시 다이스" : products[17].name}</strong>
+                <strong className="hero-mobile-product-title">{activeHero.visual === "boards" ? "보드픽 추천 보드게임" : activeHero.visual === "dice" ? "오로라 · 메탈 · 갤럭시 · 오팔 다이스" : products[17].name}</strong>
               </div>
             </div>
             <button className="hero-arrow hero-arrow-prev" type="button" onClick={() => moveHero(-1)} aria-label="이전 배너">‹</button>
