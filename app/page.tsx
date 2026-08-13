@@ -928,9 +928,6 @@ export default function Home() {
   const [playerFilter, setPlayerFilter] = useState("전체");
   const [timeFilter, setTimeFilter] = useState("전체");
   const [levelFilter, setLevelFilter] = useState("전체");
-  const [finderPlayers, setFinderPlayers] = useState("2인");
-  const [finderTime, setFinderTime] = useState("30분 이하");
-  const [finderMood, setFinderMood] = useState("가볍게");
   const [heroSlide, setHeroSlide] = useState(0);
   const [heroPaused, setHeroPaused] = useState(false);
   const [heroInteracting, setHeroInteracting] = useState(false);
@@ -1386,15 +1383,6 @@ export default function Home() {
     navigateFromTop("shop");
   };
 
-  const applyGameFinder = () => {
-    setCategory(finderMood === "전략적으로" ? "전략" : finderMood === "함께" ? "협력" : "보드게임");
-    setPlayerFilter(finderPlayers);
-    setTimeFilter(finderTime);
-    setLevelFilter(finderMood === "가볍게" ? "매우 쉬움" : "전체");
-    setSort("추천순");
-    navigate("shop");
-  };
-
   const checkoutValid = Boolean(
     form.name && form.phone && form.email && form.receiver && form.receiverPhone && form.postcode && form.address && form.detailAddress && terms && selectedCart.length
   );
@@ -1643,16 +1631,6 @@ export default function Home() {
           <section className="content-section page-shell">
             <SectionHeader eyebrow="MOST LOVED" title="지금 많이 찾는 게임" description="보드픽 고객이 직접 고른 만족도 높은 인기 게임이에요." target="shop" />
             <div className="product-grid">{[products[6], products[7], products[4], products[3]].map((p) => <ProductCard key={p.id} product={p} />)}</div>
-          </section>
-
-          <section className="game-finder page-shell" aria-labelledby="game-finder-title">
-            <div className="game-finder-intro"><span className="eyebrow">FIND YOUR GAME</span><h2 id="game-finder-title">세 가지만 고르면<br />오늘의 게임을 찾아드려요</h2><p>상품명이 아니라 함께할 상황으로 찾아보세요.</p></div>
-            <div className="finder-form">
-              <fieldset><legend><b>01</b> 몇 명이 플레이하나요?</legend><div>{["2인", "3–4인", "5인+"].map((item) => <button type="button" key={item} className={finderPlayers === item ? "active" : ""} onClick={() => setFinderPlayers(item)}>{item}</button>)}</div></fieldset>
-              <fieldset><legend><b>02</b> 시간은 얼마나 있나요?</legend><div>{["30분 이하", "60분 이하", "60분+"].map((item) => <button type="button" key={item} className={finderTime === item ? "active" : ""} onClick={() => setFinderTime(item)}>{item}</button>)}</div></fieldset>
-              <fieldset><legend><b>03</b> 어떤 분위기가 좋아요?</legend><div>{["가볍게", "함께", "전략적으로"].map((item) => <button type="button" key={item} className={finderMood === item ? "active" : ""} onClick={() => setFinderMood(item)}>{item}</button>)}</div></fieldset>
-              <button className="button-primary finder-submit" type="button" onClick={applyGameFinder}>조건에 맞는 게임 보기 <span aria-hidden="true">→</span></button>
-            </div>
           </section>
 
           <section className="content-section page-shell">
