@@ -34,7 +34,7 @@ type Product = {
 };
 
 type CartItem = { product: Product; quantity: number; selected: boolean };
-type ChatMessage = { role: "user" | "assistant"; content: string };
+type ChatMessage = { role: "user" | "assistant"; content: string; recommendations?: number[] };
 
 const getChatApiUrl = () => {
   const configuredUrl = String(import.meta.env.VITE_CHAT_API_URL ?? "").trim();
@@ -738,6 +738,44 @@ const editorNote = (product: Product) => product.featureCopy
       ? `${product.level}의 질감과 숫자 가독성을 함께 고른 다이스`
       : "플레이와 보관을 더 편하게 만드는 실용적인 선택");
 
+const recommendationIntentPattern = /추천|골라|찾아|어울|선물|입문|할게임|게임.+(할|좋|원)|주사위.+(살|원|필요)/;
+
+const inferChatRecommendations = (question: string, answer: string, catalog: Product[], suggestedNames: string[] = []) => {
+  const normalizedQuestion = question.replace(/\s+/g, "");
+  const normalizedAnswer = answer.replace(/\s+/g, "");
+  const context = `${normalizedQuestion} ${normalizedAnswer}`;
+  const explicitNames = new Set(suggestedNames.map((name) => name.replace(/\s+/g, "")));
+  const explicit = catalog.filter((product) => explicitNames.has(product.name.replace(/\s+/g, "")) || normalizedAnswer.includes(product.name.replace(/\s+/g, "")));
+  const hasRecommendationIntent = recommendationIntentPattern.test(normalizedQuestion) || explicit.length > 0;
+  if (!hasRecommendationIntent) return [];
+
+  const scoreProduct = (product: Product) => {
+    let score = explicit.some((item) => item.id === product.id) ? 100 : 0;
+    const searchable = [product.name, product.category, product.genre, product.players, product.time, product.level, product.description, product.featureCopy, ...(product.diceTags ?? [])].filter(Boolean).join(" ");
+    searchable.split(/[\s·,–~]+/).filter((token) => token.length >= 2).forEach((token) => {
+      if (context.includes(token.replace(/\s+/g, ""))) score += token.length >= 4 ? 4 : 2;
+    });
+    if (/주사위|다이스|D20|D6/i.test(context) && product.category === "주사위") score += 10;
+    if (/보드게임|가족게임|파티게임|전략게임/.test(context) && product.category === "보드게임") score += 7;
+    if (/액세서리|슬리브|트레이|미플|정리함/.test(context) && product.category === "액세서리") score += 8;
+    if (/2명|2인/.test(context) && (product.players.includes("2") || product.players.includes("1–4"))) score += 6;
+    if (/30분|짧|간단|가볍|입문/.test(context) && numericRange(product.time)[0] <= 35) score += 5;
+    if (/가족|아이/.test(context) && product.genre.includes("가족")) score += 7;
+    if (/파티|모임/.test(context) && product.genre.includes("파티")) score += 7;
+    if (/전략|어렵|깊이/.test(context) && product.genre.includes("전략")) score += 6;
+    if (/추리|미스터리/.test(context) && product.genre.includes("추리")) score += 8;
+    return score;
+  };
+
+  return catalog
+    .filter((product) => !product.paymentTest && productStock(product) > 0)
+    .map((product) => ({ product, score: scoreProduct(product) }))
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score || Number(Boolean(b.product.featured)) - Number(Boolean(a.product.featured)) || b.product.rating - a.product.rating)
+    .slice(0, 3)
+    .map(({ product }) => product.id);
+};
+
 const emptyAdminForm = {
   name: "",
   label: "",
@@ -966,6 +1004,7 @@ export default function Home() {
   const [chatError, setChatError] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{ role: "assistant", content: "안녕하세요! 보드픽 AI 도우미예요. 인원, 플레이 시간, 원하는 분위기를 알려주시면 게임을 골라드릴게요." }]);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const initialProductHandledRef = useRef(false);
   const completeNaverPayOrder = (approvedOrderNumber: string) => {
     setPayment("네이버페이");
     setOrderNumber(approvedOrderNumber);
@@ -1009,9 +1048,10 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ messages: nextMessages.slice(-8) }),
       });
-      const result = await response.json() as { answer?: string; message?: string };
+      const result = await response.json() as { answer?: string; message?: string; recommendations?: string[] };
       if (!response.ok || !result.answer) throw new Error(result.message || "답변을 불러오지 못했습니다.");
-      setChatMessages((current) => [...current, { role: "assistant", content: result.answer as string }]);
+      const recommendationIds = inferChatRecommendations(content, result.answer, [...customProducts, ...products], result.recommendations);
+      setChatMessages((current) => [...current, { role: "assistant", content: result.answer as string, recommendations: recommendationIds }]);
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
       const isInternalBrowserError = message === "The string did not match the expected pattern." || message === "Failed to fetch";
@@ -1096,6 +1136,21 @@ export default function Home() {
   }, [postcodeOpen]);
 
   const catalogProducts = useMemo(() => [...customProducts, ...products], [customProducts]);
+
+  useEffect(() => {
+    if (initialProductHandledRef.current) return;
+    const productId = Number(new URLSearchParams(window.location.search).get("product"));
+    if (!productId) {
+      initialProductHandledRef.current = true;
+      return;
+    }
+    const linkedProduct = catalogProducts.find((product) => product.id === productId);
+    if (!linkedProduct) return;
+    initialProductHandledRef.current = true;
+    setSelectedProduct(linkedProduct);
+    setDetailQuantity(1);
+    setView("detail");
+  }, [catalogProducts]);
   const activeHero = heroSlides[heroSlide];
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
   const selectedCart = cart.filter((item) => item.selected);
@@ -1188,6 +1243,13 @@ export default function Home() {
   const navigate = (next: View) => {
     setView(next);
     setMenuOpen(false);
+    if (next !== "detail") {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has("product")) {
+        url.searchParams.delete("product");
+        window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+      }
+    }
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -1235,6 +1297,9 @@ export default function Home() {
   const openProduct = (product: Product) => {
     setSelectedProduct(product);
     setDetailQuantity(1);
+    const url = new URL(window.location.href);
+    url.searchParams.set("product", String(product.id));
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
     navigate("detail");
   };
 
@@ -1911,7 +1976,32 @@ export default function Home() {
               <button type="button" onClick={() => setChatOpen(false)} aria-label="AI 상담 닫기">×</button>
             </header>
             <div className="ai-chat-messages" aria-live="polite">
-              {chatMessages.map((message, index) => <div className={`ai-chat-message ${message.role}`} key={`${message.role}-${index}`}><span>{message.role === "assistant" ? "AI" : "나"}</span><p>{message.content}</p></div>)}
+              {chatMessages.map((message, index) => {
+                const recommendedProducts = (message.recommendations ?? []).map((id) => catalogProducts.find((product) => product.id === id)).filter((product): product is Product => Boolean(product));
+                return (
+                  <div className={`ai-chat-message ${message.role}`} key={`${message.role}-${index}`}>
+                    <span>{message.role === "assistant" ? "AI" : "나"}</span>
+                    <div className="ai-chat-message-content">
+                      <p>{message.content}</p>
+                      {recommendedProducts.length > 0 && (
+                        <div className="ai-chat-products" aria-label="AI 추천 상품">
+                          {recommendedProducts.map((product) => (
+                            <a className="ai-chat-product" href={`${siteAsset("/")}?product=${product.id}`} key={product.id} onClick={(event) => { event.preventDefault(); setChatOpen(false); openProduct(product); }}>
+                              <span className="ai-chat-product-image"><img src={transparentProductAsset(product.image)} alt={`${product.name} 상품 이미지`} /></span>
+                              <span className="ai-chat-product-copy">
+                                <small>{product.genre}</small>
+                                <strong>{product.name}</strong>
+                                <span>{product.description}</span>
+                                <b>{formatWon(product.price)} <i>상품 상세 보기 →</i></b>
+                              </span>
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
               {chatLoading && <div className="ai-chat-message assistant"><span>AI</span><p className="ai-chat-typing"><i /><i /><i /><b className="sr-only">답변 작성 중</b></p></div>}
               {chatError && <div className="ai-chat-error" role="alert"><span>{chatError}</span><button type="button" onClick={() => sendChatMessage(undefined, chatMessages.filter((message) => message.role === "user").at(-1)?.content)}>다시 시도</button></div>}
               <div ref={chatEndRef} />

@@ -23,8 +23,18 @@ const PRODUCT_CONTEXT = `
 - 모먼트: 2인 전용, 15분, 난이도 쉬움, 21,000원
 - 미스터리 호텔: 2~5인, 50분, 난이도 보통, 추리, 38,500원
 - 드래곤즈 킵: 2~4인, 30~60분, 전략 어드벤처
-- 주사위: 다각면 세트, D6 세트, D20 단품과 레진·메탈·원목 소재
-- 액세서리: 카드 슬리브, 원목 주사위 트레이, 컬러 미플 등
+- 오로라 주사위 세트: 7개 다각면 레진 세트, 14,800원
+- 클래식 컬러 주사위 12개: 컬러 D6 세트, 6,800원
+- 드래곤 메탈 주사위 세트: 7개 다각면 메탈 세트, 42,900원
+- 갤럭시 레진 주사위 세트: 7개 다각면 레진 세트, 18,900원
+- 핸드메이드 원목 주사위 6개: 원목 D6 세트, 16,200원
+- 크림슨 엠버 D20: 레진 D20 단품, 12,800원
+- 타이드 오팔 D20: 오팔 레진 D20 단품, 13,800원
+- 옵시디언 크라운 D6 세트: 메탈 D6 6개 세트, 34,800원
+- 프리미엄 카드 슬리브: 표준 카드 100매, 6,800원
+- 원목 주사위 트레이: 저소음 20×20cm, 19,000원
+- 컬러 미플 24종: 원목 미플 6색, 12,500원
+- 모듈형 게임 정리함: 6모듈 조립형, 27,000원
 - 결제 테스트 상품: 1,000원, 실제 배송 없음
 
 쇼핑몰 정책:
@@ -35,6 +45,7 @@ const PRODUCT_CONTEXT = `
 
 const SYSTEM_PROMPT = `당신은 보드게임 전문 쇼핑몰 '보드픽'의 AI 상품 도우미입니다.
 항상 친절하고 간결한 한국어로 답하세요. 고객의 인원, 플레이 시간, 난이도, 분위기를 확인해 최대 3개 상품을 추천하고 각 추천 이유를 짧게 설명하세요.
+상품을 추천할 때는 반드시 위 목록의 정확한 상품명을 사용하세요. 상품 링크나 URL은 답변에 직접 쓰지 마세요. 쇼핑몰 화면이 답변 아래에 이미지와 상세보기 링크가 포함된 상품 카드를 자동으로 표시합니다.
 아래에 없는 재고, 가격, 할인, 배송일을 지어내지 마세요. 확실하지 않으면 상품 상세 페이지나 고객센터 확인을 안내하세요.
 결제 정보, 비밀번호, 주민등록번호 등 민감정보를 요구하지 마세요. 의료·법률·금융 상담은 하지 마세요.
 답변은 모바일에서도 읽기 쉽도록 5문장 안팎으로 작성하세요.
@@ -125,7 +136,9 @@ export async function POST(request: Request) {
       const detail = response.status === 429 ? "무료 사용량이 잠시 소진되었습니다. 잠시 후 다시 이용해 주세요." : "AI 상담 답변을 불러오지 못했습니다.";
       return json({ message: detail }, response.status === 429 ? 429 : 502, origin);
     }
-    return json({ answer, model: process.env.GROQ_MODEL || "openai/gpt-oss-20b" }, 200, origin);
+    const productNames = PRODUCT_CONTEXT.split("\n").map((line) => line.match(/^- ([^:]+):/)?.[1]).filter((name): name is string => Boolean(name));
+    const recommendations = productNames.filter((name) => answer.replace(/\s+/g, "").includes(name.replace(/\s+/g, ""))).slice(0, 3);
+    return json({ answer, recommendations, model: process.env.GROQ_MODEL || "openai/gpt-oss-20b" }, 200, origin);
   } catch {
     return json({ message: "AI 상담 서비스에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요." }, 502, origin);
   }
