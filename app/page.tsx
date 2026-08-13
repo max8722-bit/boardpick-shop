@@ -1155,10 +1155,11 @@ export default function Home() {
   }, [selectedProduct]);
 
   const visibleProducts = useMemo(() => {
+    const normalizedSearch = search.trim().toLocaleLowerCase("ko-KR");
     let list = catalogProducts.filter((p) => {
-      const text = `${p.name} ${p.genre} ${p.category}`.toLowerCase();
-      const matchesSearch = text.includes(search.toLowerCase());
-      const matchesCategory = p.paymentTest && view === "new" ? true : category === "전체" ? p.category === "보드게임" : p.category === category || p.genre.includes(category) || Boolean(p.diceTags?.includes(category));
+      const searchableText = [p.name, p.label, p.genre, p.category, p.description, p.players, p.time, p.level, ...(p.diceTags ?? [])].join(" ").toLocaleLowerCase("ko-KR");
+      const matchesSearch = !normalizedSearch || searchableText.includes(normalizedSearch);
+      const matchesCategory = p.paymentTest && view === "new" ? true : category === "전체" ? (normalizedSearch ? true : p.category === "보드게임") : p.category === category || p.genre.includes(category) || Boolean(p.diceTags?.includes(category));
       const matchesDiceMaterial = !isDiceCategory || diceMaterial === "전체" || Boolean(p.diceTags?.includes(diceMaterial));
       const playerRange = numericRange(p.players);
       const playerMin = playerRange[0] ?? 0;
@@ -1389,8 +1390,19 @@ export default function Home() {
 
   const handleSearch = (event: FormEvent) => {
     event.preventDefault();
+    const query = search.trim();
+    if (!query) {
+      showToast("검색어를 입력해 주세요.");
+      return;
+    }
+    setSearch(query);
     setMobileSearchOpen(false);
     setCategory("전체");
+    setDiceMaterial("전체");
+    setPlayerFilter("전체");
+    setTimeFilter("전체");
+    setLevelFilter("전체");
+    setSort("추천순");
     navigateFromTop("shop");
   };
 
@@ -1518,7 +1530,7 @@ export default function Home() {
           </button>
           <form className="search-box" onSubmit={handleSearch}>
             <label className="sr-only" htmlFor="site-search">상품 검색</label>
-            <input id="site-search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="어떤 게임을 찾으세요?" />
+            <input id="site-search" type="search" enterKeyHint="search" autoComplete="off" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="상품명, 장르, 재질을 검색해 보세요" />
             <button type="submit" aria-label="검색"><EmptyIcon type="search" /></button>
           </form>
           <div className="header-actions">
@@ -1531,7 +1543,7 @@ export default function Home() {
         <form id="mobile-search-panel" className={`mobile-search-panel ${mobileSearchOpen ? "open" : ""}`} onSubmit={handleSearch}>
           <div className="page-shell">
             <label className="sr-only" htmlFor="mobile-site-search">상품 검색</label>
-            <input id="mobile-site-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="어떤 게임을 찾으세요?" />
+            <input id="mobile-site-search" type="search" enterKeyHint="search" autoComplete="off" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="상품명, 장르, 재질을 검색해 보세요" />
             <button type="submit" aria-label="검색"><EmptyIcon type="search" /></button>
           </div>
         </form>
@@ -1693,7 +1705,7 @@ export default function Home() {
             </div>
             <div className="filter-tools"><span><strong>{visibleProducts.length}</strong>개의 상품</span>{!isDiceCategory && category !== "액세서리" && <button type="button" onClick={() => { setCategory("보드게임"); setPlayerFilter("전체"); setTimeFilter("전체"); setLevelFilter("전체"); }}>조건 초기화</button>}<label>정렬 <select value={sort} onChange={(e) => setSort(e.target.value)}><option>추천순</option><option>평점순</option><option>낮은 가격순</option><option>높은 가격순</option></select></label></div>
           </div>
-          {search && <div className="search-result-copy">‘{search}’ 검색 결과 <strong>{visibleProducts.length}</strong>개 <button onClick={() => setSearch("")}>검색어 지우기</button></div>}
+          {search && <div className="search-result-copy" role="status" aria-live="polite">‘{search}’ 검색 결과 <strong>{visibleProducts.length}</strong>개 <button onClick={() => { setSearch(""); setCategory("보드게임"); }}>검색어 지우기</button></div>}
           {visibleProducts.length ? <div className="product-grid collection-grid">{visibleProducts.map((p) => <ProductCard key={p.id} product={p} />)}</div> : <div className="empty-state"><EmptyIcon type="search" /><h2>조건에 맞는 상품이 없어요</h2><p>검색어나 필터를 바꿔 다시 찾아보세요.</p><button className="button-primary" onClick={() => { setSearch(""); setCategory("전체"); }}>전체 상품 보기</button></div>}
         </section>
       )}
