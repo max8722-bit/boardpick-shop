@@ -60,11 +60,11 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .main-nav { border-top: 1px solid #f0f1f0; }
 .primary-nav { height: 49px; display: flex; align-items: center; gap: 36px; }
 .primary-nav > button { position: relative; height: 100%; padding: 0; border: 0; background: transparent; font-size: 14px; font-weight: 700; cursor: pointer; }
-.primary-nav > button.active { color: var(--ink); }
-.primary-nav > button.active::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 3px; }
-.primary-nav > button.nav-board.active::after { background: var(--brand-red); }
-.primary-nav > button.nav-dice.active::after { background: var(--brand-yellow); }
-.primary-nav > button.nav-accessory.active::after { background: var(--brand-blue); }
+.primary-nav > button.nav-board { --nav-active-color: var(--brand-red); }
+.primary-nav > button.nav-dice { --nav-active-color: var(--brand-yellow); }
+.primary-nav > button.nav-accessory { --nav-active-color: var(--brand-blue); }
+.primary-nav > button.active { color: var(--nav-active-color); }
+.primary-nav > button.active::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 3px; background: var(--nav-active-color); }
 .submenu-trigger span { display: inline-block; margin-left: 6px; color: #929792; font-size: 13px; transition: transform .2s; }
 .submenu-trigger.active span { transform: rotate(180deg); }
 .board-subnav { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: #fff; box-shadow: 0 14px 28px rgba(24, 39, 30, .07); }
