@@ -1925,7 +1925,7 @@ export default function Home() {
             <small className="ai-chat-disclaimer">AI 답변은 참고용이며 가격·재고는 상품 페이지를 확인해 주세요.</small>
           </section>
         )}
-        <button className="ai-chat-launcher" type="button" onClick={() => setChatOpen((open) => !open)} aria-expanded={chatOpen} aria-controls="ai-chat-panel">
+        <button className="ai-chat-launcher" type="button" onClick={() => setChatOpen((open) => !open)} aria-label={chatOpen ? "AI 상담 닫기" : "AI 게임 추천 열기"} aria-expanded={chatOpen} aria-controls="ai-chat-panel">
           <span aria-hidden="true">{chatOpen ? "×" : "AI"}</span><b>{chatOpen ? "상담 닫기" : "AI 게임 추천"}</b>
         </button>
       </aside>
