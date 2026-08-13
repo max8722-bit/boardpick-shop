@@ -766,7 +766,7 @@ const heroSlides = [
     titleBottom: "테이블 위에 펼쳐지는 취향",
     description: "게임을 잘 몰라도 인원, 시간, 분위기만 고르면 실패 없는 한 판을 보드픽이 골라드릴게요.",
     primary: "보드게임 고르기",
-    secondary: "이번 주 추천",
+    secondary: "이번 달 추천",
     tab: "게임 큐레이션",
     visual: "boards",
   },
