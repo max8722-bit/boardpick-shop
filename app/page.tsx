@@ -35,6 +35,15 @@ type Product = {
 
 type CartItem = { product: Product; quantity: number; selected: boolean };
 type ChatMessage = { role: "user" | "assistant"; content: string; recommendations?: number[] };
+type CustomerProfile = { id: string; email: string; name: string; picture?: string };
+type GoogleCredentialResponse = { credential?: string; select_by?: string };
+type GoogleAccounts = {
+  id: {
+    initialize: (options: { client_id: string; callback: (response: GoogleCredentialResponse) => void; use_fedcm_for_prompt?: boolean }) => void;
+    renderButton: (element: HTMLElement, options: { type?: "standard"; theme?: "outline"; size?: "large"; shape?: "rectangular"; text?: "continue_with"; width?: number; locale?: string }) => void;
+    disableAutoSelect: () => void;
+  };
+};
 
 const getChatApiUrl = () => {
   const configuredUrl = String(import.meta.env.VITE_CHAT_API_URL ?? "").trim();
@@ -46,6 +55,15 @@ const getChatApiUrl = () => {
     return new URL(configuredUrl || "/api/chat", window.location.origin).toString();
   } catch {
     throw new Error("AI 상담 연결 주소가 올바르지 않습니다. 잠시 후 다시 이용해 주세요.");
+  }
+};
+
+const getGoogleAuthApiUrl = () => {
+  const configuredUrl = String(import.meta.env.VITE_AUTH_API_URL ?? "").trim();
+  try {
+    return new URL(configuredUrl || "/api/auth/google", window.location.origin).toString();
+  } catch {
+    throw new Error("Google 로그인 연결 주소가 올바르지 않습니다.");
   }
 };
 
@@ -86,6 +104,7 @@ declare global {
         onclose?: () => void;
       }) => DaumPostcodeInstance;
     };
+    google?: { accounts: GoogleAccounts };
   }
 }
 
@@ -95,6 +114,36 @@ let daumPostcodePromise: Promise<void> | null = null;
 const NAVER_PAY_SCRIPT_ID = "naver-pay-sdk";
 const NAVER_PAY_SCRIPT_URL = "https://nsp.pay.naver.com/sdk/js/naverpay.min.js";
 let naverPayPromise: Promise<void> | null = null;
+const GOOGLE_IDENTITY_SCRIPT_ID = "google-identity-services";
+const GOOGLE_IDENTITY_SCRIPT_URL = "https://accounts.google.com/gsi/client?hl=ko";
+let googleIdentityPromise: Promise<void> | null = null;
+
+const loadGoogleIdentity = () => {
+  if (window.google?.accounts) return Promise.resolve();
+  if (googleIdentityPromise) return googleIdentityPromise;
+  googleIdentityPromise = new Promise<void>((resolve, reject) => {
+    const handleLoad = () => window.google?.accounts ? resolve() : reject(new Error("Google 로그인을 초기화하지 못했습니다."));
+    const handleError = () => reject(new Error("Google 로그인 서비스를 불러오지 못했습니다."));
+    const existing = document.getElementById(GOOGLE_IDENTITY_SCRIPT_ID) as HTMLScriptElement | null;
+    if (existing) {
+      existing.addEventListener("load", handleLoad, { once: true });
+      existing.addEventListener("error", handleError, { once: true });
+      return;
+    }
+    const script = document.createElement("script");
+    script.id = GOOGLE_IDENTITY_SCRIPT_ID;
+    script.src = GOOGLE_IDENTITY_SCRIPT_URL;
+    script.async = true;
+    script.defer = true;
+    script.addEventListener("load", handleLoad, { once: true });
+    script.addEventListener("error", handleError, { once: true });
+    document.head.appendChild(script);
+  }).catch((error) => {
+    googleIdentityPromise = null;
+    throw error;
+  });
+  return googleIdentityPromise;
+};
 
 const loadNaverPay = () => {
   if (window.Naver?.Pay) return Promise.resolve();
@@ -994,7 +1043,11 @@ export default function Home() {
   const [adminAuthenticated, setAdminAuthenticated] = useState(false);
   const [customerLoginOpen, setCustomerLoginOpen] = useState(false);
   const [customerLoggedIn, setCustomerLoggedIn] = useState(false);
+  const [customerProfile, setCustomerProfile] = useState<CustomerProfile | null>(null);
   const [customerCredentials, setCustomerCredentials] = useState({ email: "", password: "" });
+  const [googleLoginConfig, setGoogleLoginConfig] = useState<{ loading: boolean; configured: boolean; clientId?: string }>({ loading: true, configured: false });
+  const [googleLoginStatus, setGoogleLoginStatus] = useState<"idle" | "loading" | "error">("idle");
+  const [googleLoginError, setGoogleLoginError] = useState("");
   const [adminLoginOpen, setAdminLoginOpen] = useState(false);
   const [adminCredentials, setAdminCredentials] = useState({ id: "admin", password: "boardpick" });
   const [adminLoginError, setAdminLoginError] = useState("");
@@ -1005,6 +1058,9 @@ export default function Home() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{ role: "assistant", content: "안녕하세요! 보드픽 AI 도우미예요. 인원, 플레이 시간, 원하는 분위기를 알려주시면 게임을 골라드릴게요." }]);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const initialProductHandledRef = useRef(false);
+  const googleButtonRef = useRef<HTMLDivElement>(null);
+  const googleInitializedRef = useRef(false);
+  const googleCredentialHandlerRef = useRef<(credential: string) => void>(() => undefined);
   const completeNaverPayOrder = (approvedOrderNumber: string) => {
     setPayment("네이버페이");
     setOrderNumber(approvedOrderNumber);
@@ -1026,7 +1082,86 @@ export default function Home() {
     } catch {
       window.localStorage.removeItem("boardpick-admin-products");
     }
+    try {
+      const savedProfile = window.sessionStorage.getItem("boardpick-google-profile");
+      if (savedProfile) {
+        const profile = JSON.parse(savedProfile) as CustomerProfile;
+        setCustomerProfile(profile);
+        setCustomerLoggedIn(true);
+      }
+    } catch {
+      window.sessionStorage.removeItem("boardpick-google-profile");
+    }
   }, []);
+
+  useEffect(() => {
+    fetch(getGoogleAuthApiUrl(), { headers: { Accept: "application/json" } })
+      .then((response) => response.json())
+      .then((config: { configured?: boolean; clientId?: string }) => setGoogleLoginConfig({ loading: false, configured: Boolean(config.configured && config.clientId), clientId: config.clientId }))
+      .catch(() => setGoogleLoginConfig({ loading: false, configured: false }));
+  }, []);
+
+  googleCredentialHandlerRef.current = async (credential: string) => {
+    setGoogleLoginStatus("loading");
+    setGoogleLoginError("");
+    try {
+      const response = await fetch(getGoogleAuthApiUrl(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ credential }),
+      });
+      const result = await response.json() as { profile?: CustomerProfile; message?: string };
+      if (!response.ok || !result.profile) throw new Error(result.message || "Google 계정을 확인하지 못했습니다.");
+      setCustomerProfile(result.profile);
+      setCustomerLoggedIn(true);
+      setCustomerCredentials((current) => ({ ...current, email: result.profile?.email || current.email }));
+      setForm((current) => ({ ...current, name: current.name || result.profile?.name || "", email: current.email || result.profile?.email || "" }));
+      try {
+        window.sessionStorage.setItem("boardpick-google-profile", JSON.stringify(result.profile));
+      } catch {
+        // 저장소를 사용할 수 없는 브라우저에서도 현재 페이지의 로그인 상태는 유지합니다.
+      }
+      setCustomerLoginOpen(false);
+      showToast(`${result.profile.name}님, Google 계정으로 로그인했어요.`);
+      setGoogleLoginStatus("idle");
+    } catch (error) {
+      setGoogleLoginStatus("error");
+      setGoogleLoginError(error instanceof Error ? error.message : "Google 로그인에 실패했습니다. 다시 시도해 주세요.");
+    }
+  };
+
+  useEffect(() => {
+    if (!customerLoginOpen || !googleLoginConfig.configured || !googleLoginConfig.clientId) return;
+    let cancelled = false;
+    setGoogleLoginStatus("loading");
+    loadGoogleIdentity().then(() => {
+      if (cancelled || !window.google?.accounts || !googleButtonRef.current) return;
+      if (!googleInitializedRef.current) {
+        window.google.accounts.id.initialize({
+          client_id: googleLoginConfig.clientId as string,
+          callback: (response) => response.credential && googleCredentialHandlerRef.current(response.credential),
+          use_fedcm_for_prompt: true,
+        });
+        googleInitializedRef.current = true;
+      }
+      googleButtonRef.current.replaceChildren();
+      window.google.accounts.id.renderButton(googleButtonRef.current, {
+        type: "standard",
+        theme: "outline",
+        size: "large",
+        shape: "rectangular",
+        text: "continue_with",
+        width: Math.min(344, googleButtonRef.current.clientWidth || 344),
+        locale: "ko",
+      });
+      setGoogleLoginStatus("idle");
+    }).catch((error) => {
+      if (cancelled) return;
+      setGoogleLoginStatus("error");
+      setGoogleLoginError(error instanceof Error ? error.message : "Google 로그인을 불러오지 못했습니다.");
+    });
+    return () => { cancelled = true; };
+  }, [customerLoginOpen, googleLoginConfig]);
 
   useEffect(() => {
     if (chatOpen) chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -1601,7 +1736,7 @@ export default function Home() {
           <div className="header-actions">
             <button onClick={() => { setBoardMenuOpen(false); setDiceMenuOpen(false); showToast(liked.length ? `찜한 상품이 ${liked.length}개 있어요.` : "아직 찜한 상품이 없어요."); }}><EmptyIcon type="heart" /><small>찜 {liked.length || ""}</small></button>
             <button className="cart-action" onClick={() => navigateFromTop("cart")}><EmptyIcon type="bag" /><small>장바구니</small>{cartCount > 0 && <b>{cartCount}</b>}</button>
-            <button onClick={() => customerLoggedIn ? showToast("로그인되어 있어요.") : setCustomerLoginOpen(true)}><EmptyIcon type="user" /><small>{customerLoggedIn ? "내 정보" : "로그인"}</small></button>
+            <button onClick={() => customerLoggedIn ? showToast(`${customerProfile?.name || "회원"}님으로 로그인되어 있어요.`) : setCustomerLoginOpen(true)}><EmptyIcon type="user" /><small>{customerLoggedIn ? "내 정보" : "로그인"}</small></button>
           </div>
           <button className="mobile-search-button" type="button" onClick={() => setMobileSearchOpen((open) => !open)} aria-label={mobileSearchOpen ? "검색창 닫기" : "검색창 열기"} aria-expanded={mobileSearchOpen} aria-controls="mobile-search-panel"><EmptyIcon type="search" /></button>
         </div>
@@ -2030,12 +2165,20 @@ export default function Home() {
             <span className="eyebrow">BOARDPICK MEMBER</span>
             <h2 id="customer-login-title">로그인</h2>
             <p>보드픽 회원으로 로그인하고 찜한 상품과 주문 내역을 확인하세요.</p>
+            <div className="google-login-area">
+              {googleLoginConfig.loading && <div className="google-login-placeholder" role="status">Google 로그인 준비 중…</div>}
+              {!googleLoginConfig.loading && googleLoginConfig.configured && <div className="google-login-button" ref={googleButtonRef} aria-label="Google 계정으로 로그인" />}
+              {!googleLoginConfig.loading && !googleLoginConfig.configured && <div className="google-login-placeholder is-disabled">Google 로그인 설정이 필요합니다</div>}
+              {googleLoginStatus === "loading" && googleLoginConfig.configured && <small className="google-login-status" role="status">Google 계정을 확인하고 있습니다.</small>}
+              {googleLoginError && <p className="google-login-error" role="alert">{googleLoginError}</p>}
+            </div>
+            <div className="login-divider"><span>또는 이메일로 로그인</span></div>
             <form onSubmit={(event) => { event.preventDefault(); setCustomerLoggedIn(true); setCustomerLoginOpen(false); showToast("로그인되었습니다."); }}>
               <label><span>이메일</span><input autoFocus required type="email" value={customerCredentials.email} onChange={(event) => setCustomerCredentials({ ...customerCredentials, email: event.target.value })} autoComplete="email" placeholder="이메일을 입력해 주세요" /></label>
               <label><span>비밀번호</span><input required type="password" value={customerCredentials.password} onChange={(event) => setCustomerCredentials({ ...customerCredentials, password: event.target.value })} autoComplete="current-password" placeholder="비밀번호를 입력해 주세요" /></label>
               <button className="button-primary" type="submit">로그인</button>
             </form>
-            <small>현재는 화면 확인용 데모 로그인입니다.</small>
+            <small>이메일 로그인은 화면 확인용이며, Google 로그인은 Google에서 계정을 확인합니다.</small>
           </section>
         </div>
       )}

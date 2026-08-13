@@ -22,6 +22,7 @@ jobs:
       NEXT_PUBLIC_NAVER_PAY_CHAIN_ID: ${{ vars.NEXT_PUBLIC_NAVER_PAY_CHAIN_ID }}
       NAVER_PAY_MODE: development
       VITE_CHAT_API_URL: https://boardpick-shop.max8722.chatgpt.site/api/chat
+      VITE_AUTH_API_URL: https://boardpick-shop.max8722.chatgpt.site/api/auth/google
     steps:
       - name: Checkout
         uses: actions/checkout@v4
