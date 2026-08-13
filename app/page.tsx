@@ -36,6 +36,16 @@ type Product = {
 type CartItem = { product: Product; quantity: number; selected: boolean };
 type ChatMessage = { role: "user" | "assistant"; content: string; recommendations?: number[] };
 type CustomerProfile = { id: string; email: string; name: string; picture?: string };
+type AdminSection = "dashboard" | "products" | "register" | "orders";
+type ProductOverride = {
+  price?: number;
+  originalPrice?: number;
+  stock?: number;
+  badge?: Product["badge"] | "";
+  visible?: boolean;
+};
+type AdminOrderStatus = "결제완료" | "상품준비" | "배송중" | "배송완료" | "취소";
+type AdminOrder = { id: string; date: string; customer: string; product: string; quantity: number; total: number; status: AdminOrderStatus };
 type GoogleCredentialResponse = { credential?: string; select_by?: string };
 type GoogleAccounts = {
   id: {
@@ -846,6 +856,16 @@ const emptyAdminForm = {
   material: "레진",
 };
 
+const initialAdminOrders: AdminOrder[] = [
+  { id: "BP-260813-1042", date: "08.13 10:42", customer: "김민지", product: "드래곤즈 킵", quantity: 1, total: 59000, status: "상품준비" },
+  { id: "BP-260813-1037", date: "08.13 09:18", customer: "박서준", product: "오로라 레진 D20", quantity: 2, total: 36000, status: "결제완료" },
+  { id: "BP-260812-0986", date: "08.12 16:05", customer: "이지우", product: "포레스트 미플 세트 외 1건", quantity: 2, total: 47800, status: "배송중" },
+  { id: "BP-260812-0954", date: "08.12 11:31", customer: "최유진", product: "문라이트 미스터리", quantity: 1, total: 42000, status: "배송완료" },
+  { id: "BP-260811-0911", date: "08.11 14:22", customer: "정하늘", product: "클래식 원목 D6 세트", quantity: 1, total: 24000, status: "취소" },
+];
+
+const adminOrderStatuses: AdminOrderStatus[] = ["결제완료", "상품준비", "배송중", "배송완료", "취소"];
+
 const heroSlides = [
   {
     id: "curation",
@@ -1039,6 +1059,12 @@ export default function Home() {
   const [supportSearch, setSupportSearch] = useState("");
   const [selectedSupportPost, setSelectedSupportPost] = useState<number | null>(null);
   const [customProducts, setCustomProducts] = useState<Product[]>([]);
+  const [productOverrides, setProductOverrides] = useState<Record<number, ProductOverride>>({});
+  const [adminSection, setAdminSection] = useState<AdminSection>("dashboard");
+  const [adminProductSearch, setAdminProductSearch] = useState("");
+  const [adminCategoryFilter, setAdminCategoryFilter] = useState("전체");
+  const [adminStockFilter, setAdminStockFilter] = useState("전체");
+  const [adminOrders, setAdminOrders] = useState<AdminOrder[]>(initialAdminOrders);
   const [adminForm, setAdminForm] = useState(emptyAdminForm);
   const [adminAuthenticated, setAdminAuthenticated] = useState(false);
   const [customerLoginOpen, setCustomerLoginOpen] = useState(false);
@@ -1081,6 +1107,18 @@ export default function Home() {
       if (saved) setCustomProducts(JSON.parse(saved) as Product[]);
     } catch {
       window.localStorage.removeItem("boardpick-admin-products");
+    }
+    try {
+      const saved = window.localStorage.getItem("boardpick-product-overrides");
+      if (saved) setProductOverrides(JSON.parse(saved) as Record<number, ProductOverride>);
+    } catch {
+      window.localStorage.removeItem("boardpick-product-overrides");
+    }
+    try {
+      const saved = window.localStorage.getItem("boardpick-admin-orders");
+      if (saved) setAdminOrders(JSON.parse(saved) as AdminOrder[]);
+    } catch {
+      window.localStorage.removeItem("boardpick-admin-orders");
     }
     try {
       const savedProfile = window.sessionStorage.getItem("boardpick-google-profile");
@@ -1270,7 +1308,18 @@ export default function Home() {
     };
   }, [postcodeOpen]);
 
-  const catalogProducts = useMemo(() => [...customProducts, ...products], [customProducts]);
+  const managedProducts = useMemo(() => [...customProducts, ...products].map((product) => {
+    const override = productOverrides[product.id];
+    if (!override) return product;
+    return {
+      ...product,
+      price: override.price ?? product.price,
+      originalPrice: override.originalPrice ?? product.originalPrice,
+      stock: override.stock ?? product.stock,
+      badge: override.badge === "" ? undefined : override.badge ?? product.badge,
+    };
+  }), [customProducts, productOverrides]);
+  const catalogProducts = useMemo(() => managedProducts.filter((product) => productOverrides[product.id]?.visible !== false), [managedProducts, productOverrides]);
 
   useEffect(() => {
     if (initialProductHandledRef.current) return;
@@ -1375,6 +1424,24 @@ export default function Home() {
     return list;
   }, [catalogProducts, search, category, diceMaterial, playerFilter, timeFilter, levelFilter, isDiceCategory, sort, view]);
 
+  const adminFilteredProducts = useMemo(() => {
+    const keyword = adminProductSearch.trim().toLocaleLowerCase("ko-KR");
+    return managedProducts.filter((product) => {
+      const stock = productStock(product);
+      const matchesSearch = !keyword || [product.name, product.label, product.genre, product.category].join(" ").toLocaleLowerCase("ko-KR").includes(keyword);
+      const matchesCategory = adminCategoryFilter === "전체" || product.category === adminCategoryFilter;
+      const matchesStock = adminStockFilter === "전체"
+        || (adminStockFilter === "재고부족" && stock > 0 && stock <= 4)
+        || (adminStockFilter === "품절" && stock === 0)
+        || (adminStockFilter === "판매중지" && productOverrides[product.id]?.visible === false);
+      return matchesSearch && matchesCategory && matchesStock;
+    });
+  }, [managedProducts, adminProductSearch, adminCategoryFilter, adminStockFilter, productOverrides]);
+  const adminSoldOutCount = managedProducts.filter((product) => productStock(product) === 0).length;
+  const adminLowStockProducts = managedProducts.filter((product) => productStock(product) > 0 && productStock(product) <= 4).sort((a, b) => productStock(a) - productStock(b));
+  const adminInventoryValue = managedProducts.reduce((sum, product) => sum + product.price * productStock(product), 0);
+  const pendingOrderCount = adminOrders.filter((order) => order.status === "결제완료" || order.status === "상품준비").length;
+
   const navigate = (next: View) => {
     setView(next);
     setMenuOpen(false);
@@ -1445,6 +1512,7 @@ export default function Home() {
 
   const openAdminAccess = () => {
     if (adminAuthenticated) {
+      setAdminSection("dashboard");
       navigateFromTop("admin");
       return;
     }
@@ -1469,6 +1537,7 @@ export default function Home() {
     setAdminLoginError("");
     setBoardMenuOpen(false);
     setDiceMenuOpen(false);
+    setAdminSection("dashboard");
     setView("admin");
     setMenuOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1496,6 +1565,34 @@ export default function Home() {
       showToast("이미지 용량이 커서 저장할 수 없어요.");
       return false;
     }
+  };
+
+  const saveProductOverrides = (next: Record<number, ProductOverride>) => {
+    try {
+      window.localStorage.setItem("boardpick-product-overrides", JSON.stringify(next));
+      setProductOverrides(next);
+      return true;
+    } catch {
+      showToast("상품 변경 내용을 저장하지 못했어요.");
+      return false;
+    }
+  };
+
+  const updateProductOverride = (product: Product, patch: ProductOverride) => {
+    const current = productOverrides[product.id] ?? {};
+    saveProductOverrides({ ...productOverrides, [product.id]: { ...current, ...patch } });
+  };
+
+  const updateAdminOrderStatus = (id: string, status: AdminOrderStatus) => {
+    const next = adminOrders.map((order) => order.id === id ? { ...order, status } : order);
+    setAdminOrders(next);
+    try {
+      window.localStorage.setItem("boardpick-admin-orders", JSON.stringify(next));
+    } catch {
+      showToast("주문 상태를 저장하지 못했어요.");
+      return;
+    }
+    showToast(`${id} 주문을 ${status} 상태로 변경했어요.`);
   };
 
   const handleAdminImage = (event: ChangeEvent<HTMLInputElement>) => {
@@ -1549,13 +1646,19 @@ export default function Home() {
     };
     if (saveCustomProducts([nextProduct, ...customProducts])) {
       setAdminForm(emptyAdminForm);
+      setAdminSection("products");
       showToast(`${nextProduct.name} 상품을 등록했어요.`);
     }
   };
 
   const removeCustomProduct = (id: number) => {
     const target = customProducts.find((product) => product.id === id);
-    if (saveCustomProducts(customProducts.filter((product) => product.id !== id))) showToast(`${target?.name || "상품"}을 삭제했어요.`);
+    if (saveCustomProducts(customProducts.filter((product) => product.id !== id))) {
+      const nextOverrides = { ...productOverrides };
+      delete nextOverrides[id];
+      saveProductOverrides(nextOverrides);
+      showToast(`${target?.name || "상품"}을 삭제했어요.`);
+    }
   };
 
   const addToCart = (product: Product, quantity = 1, goToCart = false) => {
@@ -1782,7 +1885,7 @@ export default function Home() {
             <div className="page-shell">
               <span><b>ADMIN</b> 보드픽 운영 공간</span>
               <div>
-                <button className={view === "admin" ? "active" : ""} aria-current={view === "admin" ? "page" : undefined} onClick={() => navigateFromTop("admin")}>상품 등록</button>
+                <button className={view === "admin" ? "active" : ""} aria-current={view === "admin" ? "page" : undefined} onClick={() => { setAdminSection("dashboard"); navigateFromTop("admin"); }}>관리자 대시보드</button>
                 <button onClick={() => navigateFromTop("home")}>쇼핑몰 보기</button>
                 <button onClick={logoutAdmin}>로그아웃</button>
               </div>
@@ -1913,16 +2016,74 @@ export default function Home() {
       {view === "admin" && adminAuthenticated && (
         <section className="admin-page page-shell">
           <header className="admin-heading">
-            <div><span className="eyebrow">LOCAL STORE MANAGER</span><h1>상품 등록</h1><p>상품 정보를 입력하면 쇼핑몰 상품 목록과 상세 페이지에 바로 반영됩니다.</p></div>
+            <div><span className="eyebrow">BOARDPICK ADMIN</span><h1>스토어 관리</h1><p>상품, 재고, 주문 상태를 한곳에서 확인하고 관리하세요.</p></div>
             <button className="button-secondary" onClick={() => navigate("shop")}>쇼핑몰 보기 <span aria-hidden="true">→</span></button>
           </header>
+          <nav className="admin-tabs" aria-label="관리자 메뉴">
+            <button className={adminSection === "dashboard" ? "active" : ""} onClick={() => setAdminSection("dashboard")}><span>01</span>대시보드</button>
+            <button className={adminSection === "products" ? "active" : ""} onClick={() => setAdminSection("products")}><span>02</span>상품·재고</button>
+            <button className={adminSection === "register" ? "active" : ""} onClick={() => setAdminSection("register")}><span>03</span>상품 등록</button>
+            <button className={adminSection === "orders" ? "active" : ""} onClick={() => setAdminSection("orders")}><span>04</span>주문 현황</button>
+          </nav>
           <div className="admin-summary" aria-label="상품 현황">
-            <div><small>전체 상품</small><strong>{catalogProducts.length}</strong><span>개</span></div>
-            <div><small>직접 등록</small><strong>{customProducts.length}</strong><span>개</span></div>
-            <div><small>보드게임</small><strong>{catalogProducts.filter((product) => product.category === "보드게임").length}</strong><span>개</span></div>
-            <div><small>주사위·액세서리</small><strong>{catalogProducts.filter((product) => product.category !== "보드게임").length}</strong><span>개</span></div>
+            <div><small>판매 상품</small><strong>{catalogProducts.length}</strong><span>개</span></div>
+            <div className={adminLowStockProducts.length ? "is-warning" : ""}><small>재고 부족</small><strong>{adminLowStockProducts.length}</strong><span>개</span></div>
+            <div className={adminSoldOutCount ? "is-danger" : ""}><small>품절 상품</small><strong>{adminSoldOutCount}</strong><span>개</span></div>
+            <div><small>처리할 주문</small><strong>{pendingOrderCount}</strong><span>건</span></div>
           </div>
-          <div className="admin-layout">
+
+          {adminSection === "dashboard" && (
+            <div className="admin-dashboard-grid">
+              <section className="admin-panel admin-inventory-overview">
+                <div className="admin-panel-heading"><div><span>INVENTORY</span><h2>재고 현황</h2></div><button onClick={() => setAdminSection("products")}>전체 상품 관리 →</button></div>
+                <div className="admin-inventory-value"><small>현재 재고 자산</small><strong>{formatWon(adminInventoryValue)}</strong><p>판매가 × 현재 재고 기준</p></div>
+                <div className="admin-alert-list">
+                  {adminLowStockProducts.length ? adminLowStockProducts.slice(0, 5).map((product) => <article key={product.id}><CutoutImage src={product.image} /><span><strong>{product.name}</strong><small>{product.category} · {formatWon(product.price)}</small></span><b>{productStock(product)}개</b><button onClick={() => { setAdminProductSearch(product.name); setAdminSection("products"); }}>관리</button></article>) : <p className="admin-empty-copy">재고가 부족한 상품이 없습니다.</p>}
+                </div>
+              </section>
+              <section className="admin-panel">
+                <div className="admin-panel-heading"><div><span>ORDERS</span><h2>최근 주문</h2></div><button onClick={() => setAdminSection("orders")}>주문 전체 보기 →</button></div>
+                <div className="admin-order-list">
+                  {adminOrders.slice(0, 5).map((order) => <article key={order.id}><span><strong>{order.id}</strong><small>{order.date} · {order.customer}</small></span><span><b>{order.product}</b><small>{order.quantity}개 · {formatWon(order.total)}</small></span><em className={`order-status status-${order.status}`}>{order.status}</em></article>)}
+                </div>
+              </section>
+              <section className="admin-panel admin-quick-panel">
+                <div className="admin-panel-heading"><div><span>QUICK ACTION</span><h2>빠른 관리</h2></div></div>
+                <div className="admin-quick-actions"><button onClick={() => setAdminSection("register")}><b>＋</b><span><strong>새 상품 등록</strong><small>상품 정보와 이미지를 추가합니다.</small></span></button><button onClick={() => { setAdminStockFilter("품절"); setAdminSection("products"); }}><b>0</b><span><strong>품절 상품 확인</strong><small>{adminSoldOutCount}개 상품의 재고를 확인합니다.</small></span></button><button onClick={() => setAdminSection("orders")}><b>{pendingOrderCount}</b><span><strong>주문 처리</strong><small>결제완료·상품준비 주문을 확인합니다.</small></span></button></div>
+              </section>
+            </div>
+          )}
+
+          {adminSection === "products" && (
+            <section className="admin-products-panel">
+              <div className="admin-section-heading"><div><span className="eyebrow">PRODUCT & INVENTORY</span><h2>상품·재고 관리</h2><p>가격, 재고, 배지와 쇼핑몰 노출 상태를 바로 변경할 수 있습니다.</p></div><button className="button-primary" onClick={() => setAdminSection("register")}>새 상품 등록</button></div>
+              <div className="admin-product-toolbar">
+                <label><span className="search-icon" aria-hidden="true" /><input value={adminProductSearch} onChange={(event) => setAdminProductSearch(event.target.value)} placeholder="상품명 또는 카테고리 검색" /></label>
+                <select aria-label="상품 분류" value={adminCategoryFilter} onChange={(event) => setAdminCategoryFilter(event.target.value)}><option>전체</option><option>보드게임</option><option>주사위</option><option>액세서리</option></select>
+                <select aria-label="재고 상태" value={adminStockFilter} onChange={(event) => setAdminStockFilter(event.target.value)}><option>전체</option><option>재고부족</option><option>품절</option><option>판매중지</option></select>
+                <span><b>{adminFilteredProducts.length}</b>개 상품</span>
+              </div>
+              <div className="admin-product-table">
+                <div className="admin-product-head"><span>상품</span><span>판매가</span><span>재고</span><span>배지</span><span>노출 상태</span><span>관리</span></div>
+                {adminFilteredProducts.map((product) => {
+                  const stock = productStock(product);
+                  const visible = productOverrides[product.id]?.visible !== false;
+                  const isCustom = customProducts.some((item) => item.id === product.id);
+                  return <article className={!visible ? "is-hidden" : ""} key={product.id}>
+                    <div className="admin-product-identity"><div className="admin-product-thumb"><CutoutImage src={product.image} /></div><span><strong>{product.name}</strong><small>{product.category} · {product.genre}</small><i className={stock === 0 ? "soldout" : stock <= 4 ? "low" : "good"}>{stock === 0 ? "품절" : stock <= 4 ? "재고 부족" : "판매 가능"}</i></span></div>
+                    <label className="admin-table-field"><span>판매가</span><div><input min="0" type="number" value={product.price} onChange={(event) => updateProductOverride(product, { price: Math.max(0, Number(event.target.value)) })} /><i>원</i></div></label>
+                    <div className="admin-stock-control"><span>재고</span><button aria-label={`${product.name} 재고 1개 줄이기`} onClick={() => updateProductOverride(product, { stock: Math.max(0, stock - 1) })}>−</button><input aria-label={`${product.name} 재고 수량`} min="0" type="number" value={stock} onChange={(event) => updateProductOverride(product, { stock: Math.max(0, Number(event.target.value)) })} /><button aria-label={`${product.name} 재고 1개 늘리기`} onClick={() => updateProductOverride(product, { stock: stock + 1 })}>＋</button></div>
+                    <label className="admin-table-select"><span>배지</span><select value={product.badge ?? ""} onChange={(event) => updateProductOverride(product, { badge: event.target.value as ProductOverride["badge"] })}><option value="">없음</option><option>NEW</option><option>BEST</option><option>재입고</option><option>TEST</option></select></label>
+                    <label className="admin-table-select"><span>노출 상태</span><select value={visible ? "판매중" : "판매중지"} onChange={(event) => updateProductOverride(product, { visible: event.target.value === "판매중" })}><option>판매중</option><option>판매중지</option></select></label>
+                    <div className="admin-row-actions"><button onClick={() => showToast(`${product.name} 변경 내용을 저장했어요.`)}>저장</button><button onClick={() => openProduct(product)}>보기</button>{isCustom && <button className="danger" onClick={() => removeCustomProduct(product.id)}>삭제</button>}</div>
+                  </article>;
+                })}
+                {!adminFilteredProducts.length && <div className="admin-table-empty">조건에 맞는 상품이 없습니다.</div>}
+              </div>
+            </section>
+          )}
+
+          {adminSection === "register" && <div className="admin-layout">
             <form className="admin-form" onSubmit={registerProduct}>
               <section className="admin-form-section">
                 <div className="admin-section-title"><span>01</span><div><h2>기본 정보</h2><p>고객이 상품을 구분하는 이름과 카테고리를 입력하세요.</p></div></div>
@@ -1976,7 +2137,19 @@ export default function Home() {
                 {customProducts.length ? <div>{customProducts.slice(0, 5).map((product) => <article key={product.id}><CutoutImage src={product.image} /><span><strong>{product.name}</strong><small>{product.category} · {formatWon(product.price)}</small></span><button type="button" onClick={() => openProduct(product)}>보기</button><button className="admin-delete" type="button" onClick={() => removeCustomProduct(product.id)}>삭제</button></article>)}</div> : <p>아직 직접 등록한 상품이 없습니다.</p>}
               </section>
             </aside>
-          </div>
+          </div>}
+
+          {adminSection === "orders" && (
+            <section className="admin-orders-panel">
+              <div className="admin-section-heading"><div><span className="eyebrow">ORDER MANAGEMENT</span><h2>주문 현황</h2><p>주문별 결제 금액과 배송 진행 상태를 확인하고 변경하세요.</p></div></div>
+              <div className="admin-order-summary"><div><small>전체 주문</small><strong>{adminOrders.length}</strong><span>건</span></div>{adminOrderStatuses.map((status) => <div key={status}><small>{status}</small><strong>{adminOrders.filter((order) => order.status === status).length}</strong><span>건</span></div>)}</div>
+              <div className="admin-orders-table">
+                <div className="admin-orders-head"><span>주문번호</span><span>주문자</span><span>상품</span><span>결제금액</span><span>주문 상태</span></div>
+                {adminOrders.map((order) => <article key={order.id}><span><strong>{order.id}</strong><small>{order.date}</small></span><span><strong>{order.customer}</strong><small>일반 회원</small></span><span><strong>{order.product}</strong><small>수량 {order.quantity}개</small></span><b>{formatWon(order.total)}</b><select aria-label={`${order.id} 주문 상태`} value={order.status} onChange={(event) => updateAdminOrderStatus(order.id, event.target.value as AdminOrderStatus)}>{adminOrderStatuses.map((status) => <option key={status}>{status}</option>)}</select></article>)}
+              </div>
+              <p className="admin-data-note">현재 주문 목록은 관리자 화면 동작 확인을 위한 데모 데이터입니다.</p>
+            </section>
+          )}
         </section>
       )}
 
