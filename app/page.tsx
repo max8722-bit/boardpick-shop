@@ -382,6 +382,7 @@ const products: Product[] = [
     rating: 4.9,
     reviews: 91,
     description: "미지의 대륙을 탐험하며 지도를 완성하는 깊이 있는 전략 게임입니다.",
+    stock: 0,
   },
   {
     id: 7,
@@ -692,6 +693,7 @@ const products: Product[] = [
 ];
 
 const formatWon = (value: number) => `${value.toLocaleString("ko-KR")}원`;
+const productStock = (product: Product) => product.stock ?? (product.id * 7) % 11 + 2;
 
 const boardGameFilters = [
   { label: "전체", value: "보드게임" },
@@ -1109,6 +1111,7 @@ export default function Home() {
     recommended: [selectedProduct.genre, selectedProduct.players, selectedProduct.level],
     contents: selectedProduct.description,
   };
+  const selectedSoldOut = productStock(selectedProduct) === 0;
   const isDiceCategory = diceTypeFilters.some((item) => item.value === category);
   const boardTopActive = boardMenuOpen || view === "new" || view === "featured" || (view === "shop" && !isDiceCategory && category !== "액세서리") || (view === "detail" && selectedProduct.category === "보드게임");
   const diceTopActive = diceMenuOpen || (view === "shop" && isDiceCategory) || (view === "detail" && selectedProduct.category === "주사위");
@@ -1355,6 +1358,10 @@ export default function Home() {
   };
 
   const addToCart = (product: Product, quantity = 1, goToCart = false) => {
+    if (productStock(product) === 0) {
+      showToast(`${product.name}은(는) 현재 품절입니다.`);
+      return;
+    }
     setCart((current) => {
       const found = current.find((item) => item.product.id === product.id);
       return found
@@ -1366,6 +1373,10 @@ export default function Home() {
   };
 
   const buyNow = (product: Product, quantity = 1) => {
+    if (productStock(product) === 0) {
+      showToast(`${product.name}은(는) 현재 품절입니다.`);
+      return;
+    }
     setCart([{ product, quantity, selected: true }]);
     navigate("checkout");
   };
@@ -1430,13 +1441,15 @@ export default function Home() {
 
   const ProductCard = ({ product }: { product: Product }) => {
     const facts = productFacts(product);
-    const stock = product.stock ?? (product.id * 7) % 11 + 2;
+    const stock = productStock(product);
+    const soldOut = stock === 0;
     return (
-      <article className="product-card">
+      <article className={`product-card ${soldOut ? "is-sold-out" : ""}`.trim()}>
         <button className="product-image-button" onClick={() => openProduct(product)} aria-label={`${product.name} 상세 보기`}>
           <ProductArt product={product} />
           {product.badge && <span className={`badge badge-${product.badge === "재입고" ? "restock" : product.badge.toLowerCase()}`}>{product.badge}</span>}
           {product.originalPrice && <span className="discount-badge"><strong>{Math.round((1 - product.price / product.originalPrice) * 100)}%</strong><small>OFF</small></span>}
+          {soldOut && <span className="sold-out-mark">품절</span>}
         </button>
         <div className="product-card-body">
           <div className="product-card-topline">
@@ -1452,7 +1465,7 @@ export default function Home() {
             <strong>{formatWon(product.price)}</strong>
             {product.originalPrice && <del>{formatWon(product.originalPrice)}</del>}
           </div>
-          <div className="rating-row">{product.reviews ? <><span aria-hidden="true">★</span> {product.rating} <small>리뷰 {product.reviews}</small></> : <small className="new-product-copy">신규 등록</small>}<b className={stock <= 4 ? "low-stock" : ""}>{stock <= 4 ? `재고 ${stock}개` : "바로 출고"}</b></div>
+          <div className="rating-row">{product.reviews ? <><span aria-hidden="true">★</span> {product.rating} <small>리뷰 {product.reviews}</small></> : <small className="new-product-copy">신규 등록</small>}<b className={stock <= 4 ? "low-stock" : ""}>{soldOut ? "품절" : stock <= 4 ? `재고 ${stock}개` : "바로 출고"}</b></div>
         </div>
       </article>
     );
@@ -1759,18 +1772,19 @@ export default function Home() {
         <section className="detail page-shell">
           <button className="back-link" onClick={() => navigate("shop")}>← 상품 목록</button>
           <div className="detail-layout">
-            <div className="detail-gallery"><ProductArt product={selectedProduct} large cutout />{selectedProduct.badge && <span className={`detail-badge detail-badge-${selectedProduct.badge === "재입고" ? "restock" : selectedProduct.badge.toLowerCase()}`}>{selectedProduct.badge}</span>}</div>
+            <div className={`detail-gallery ${selectedSoldOut ? "is-sold-out" : ""}`.trim()}><ProductArt product={selectedProduct} large cutout />{selectedProduct.badge && <span className={`detail-badge detail-badge-${selectedProduct.badge === "재입고" ? "restock" : selectedProduct.badge.toLowerCase()}`}>{selectedProduct.badge}</span>}{selectedSoldOut && <span className="detail-sold-out-mark">품절</span>}</div>
             <div className="detail-info">
               <span className="eyebrow">{selectedProduct.category} · {selectedProduct.genre}</span>
               <h1>{selectedProduct.name}</h1>
               <div className="detail-rating"><span>★</span> {selectedProduct.rating} <button type="button" className="review-jump" onClick={() => scrollToDetail("review-summary")}>리뷰 {selectedProduct.reviews}개</button></div>
               <p className="detail-description">{selectedProduct.description}</p>
+              {selectedSoldOut && <p className="sold-out-notice"><b>품절</b><span>현재 준비된 수량이 모두 판매되었습니다. 찜해두시면 재입고 후 다시 확인하기 편해요.</span></p>}
               {selectedProduct.paymentTest && <p className="payment-test-notice"><b>TEST</b><span>최종 결제 금액 1,000원 · 무료배송 · 실제 상품은 발송되지 않습니다.</span></p>}
               <div className="detail-price">{selectedProduct.originalPrice && <del>{formatWon(selectedProduct.originalPrice)}</del>}<strong>{formatWon(selectedProduct.price)}</strong>{selectedProduct.originalPrice && <b>{Math.round((1 - selectedProduct.price / selectedProduct.originalPrice) * 100)}%</b>}</div>
               <div className="detail-specs"><div><small>인원 / 규격</small><strong>{selectedProduct.players}</strong></div><div><small>시간 / 구성</small><strong>{selectedProduct.time}</strong></div><div><small>난이도 / 특징</small><strong>{selectedProduct.level}</strong></div></div>
               <div className="delivery-info"><span>배송</span><p><strong>3,000원</strong><small>50,000원 이상 무료 · 오늘 주문 시 내일 출발</small></p></div>
-              <div className="quantity-line"><span>수량</span><div className="quantity-stepper"><button onClick={() => setDetailQuantity(Math.max(1, detailQuantity - 1))} aria-label="수량 줄이기">−</button><b>{detailQuantity}</b><button onClick={() => setDetailQuantity(detailQuantity + 1)} aria-label="수량 늘리기">＋</button></div><strong>{formatWon(selectedProduct.price * detailQuantity)}</strong></div>
-              <div className="detail-actions"><button className={`round-heart ${liked.includes(selectedProduct.id) ? "active" : ""}`} onClick={() => toggleLike(selectedProduct.id)} aria-label="찜하기"><FavoriteIcon /></button><button className="button-secondary" onClick={() => addToCart(selectedProduct, detailQuantity)}>장바구니 담기</button><button className="button-primary" onClick={() => buyNow(selectedProduct, detailQuantity)}>바로 구매</button></div>
+              <div className="quantity-line"><span>수량</span><div className="quantity-stepper"><button disabled={selectedSoldOut} onClick={() => setDetailQuantity(Math.max(1, detailQuantity - 1))} aria-label="수량 줄이기">−</button><b>{detailQuantity}</b><button disabled={selectedSoldOut} onClick={() => setDetailQuantity(detailQuantity + 1)} aria-label="수량 늘리기">＋</button></div><strong>{formatWon(selectedProduct.price * detailQuantity)}</strong></div>
+              <div className="detail-actions"><button className={`round-heart ${liked.includes(selectedProduct.id) ? "active" : ""}`} onClick={() => toggleLike(selectedProduct.id)} aria-label="찜하기"><FavoriteIcon /></button><button className="button-secondary" disabled={selectedSoldOut} onClick={() => addToCart(selectedProduct, detailQuantity)}>{selectedSoldOut ? "품절" : "장바구니 담기"}</button><button className="button-primary" disabled={selectedSoldOut} onClick={() => buyNow(selectedProduct, detailQuantity)}>{selectedSoldOut ? "구매 불가" : "바로 구매"}</button></div>
             </div>
           </div>
           <div className="detail-tabs"><button className="active" onClick={() => scrollToDetail("product-story")}>상품 소개</button><button onClick={() => scrollToDetail("product-guide")}>게임 정보</button><button onClick={() => scrollToDetail("shipping-guide")}>배송·교환</button><button onClick={() => scrollToDetail("review-summary")}>리뷰 {selectedProduct.reviews}</button></div>
